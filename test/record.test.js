@@ -49,7 +49,7 @@ test('creates a stable record without exporting raw author ids', () => {
     errors: [],
   });
 
-  assert.equal(record.schemaVersion, 1);
+  assert.equal(record.schemaVersion, 2);
   assert.deepEqual(record.forum.tags, [
     { id: '1', name: 'NeoForge' },
     { id: '2', name: '1.21.1' },
@@ -90,4 +90,40 @@ test('creates an error-only record when the starter message cannot be read', () 
 
   assert.deepEqual(record.messages, []);
   assert.deepEqual(record.errors, ['Starter message is unavailable']);
+});
+
+test('includes version detection in each exported record', () => {
+  const record = createThreadRecord({
+    exportedAt: '2026-07-25T20:00:00.000Z',
+    guildId: '747184859386085380',
+    forum: {
+      id: '1082779790714613840',
+      name: 'support',
+      tags: [{ id: '1', name: 'MCA 1.21.1' }],
+    },
+    thread: {
+      id: '100000000000000000',
+      name: 'Config issue',
+      url: 'https://discord.com/channels/747184859386085380/100000000000000000',
+      ownerId,
+      createdAt: '2026-07-01T10:00:00.000Z',
+      archivedAt: null,
+      archived: false,
+      locked: false,
+      appliedTagIds: ['1'],
+    },
+    starter: {
+      ...starter,
+      content: 'MCA Reborn Version: 7.7.18-beta.10',
+      attachments: [],
+    },
+    replies: [],
+    errors: [],
+  });
+
+  assert.equal(record.schemaVersion, 2);
+  assert.deepEqual(record.versions.minecraft.values, ['1.21.1']);
+  assert.equal(record.versions.minecraft.status, 'present');
+  assert.deepEqual(record.versions.mca.values, ['7.7.18-beta.10']);
+  assert.equal(record.versions.mca.status, 'present');
 });
