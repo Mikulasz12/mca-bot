@@ -1,19 +1,21 @@
 # MCA Bot
 
-A small private Discord bot for exporting existing Minecraft Comes Alive support threads for later pattern and regex analysis.
+A private Discord bot for Minecraft Comes Alive support forums. It can export historical support threads and guide new thread owners when exact Minecraft or MCA Reborn versions are missing.
 
-The first release has exactly one command:
+## Features
 
-```text
-/scan export
-```
+- Owner-controlled `/scan export` command
+- Immediate checks for new threads in the configured support forums
+- Dynamic version guidance based on what was detected
+- Up to two replaceable reminder pings, 45 seconds apart
+- Automatic warning/reminder cleanup once both exact versions are provided
+- Standalone `info` keyword for version and log help
+- No AI services, automatic locking, archiving, or deletion of user messages
 
-It scans these forum channels only:
+The configured forums are:
 
 - `1082779790714613840`
 - `1131690144160825455`
-
-It reads each thread's starter post and first five replies, then writes one timestamped JSONL file under `exports/`. It does not warn users, edit threads, change tags, download attachments, or call an AI service.
 
 ## Requirements
 
@@ -27,17 +29,17 @@ It reads each thread's starter post and first five replies, then writes one time
 1. Create or open the Discord application that will run this bot.
 2. Open **Bot** and enable the **Message Content Intent**.
 3. Reset or copy the bot token and keep it private.
-4. Under **OAuth2 → URL Generator**, select:
-   - `bot`
-   - `applications.commands`
-5. Grant the bot these permissions:
+4. Under **OAuth2 → URL Generator**, select `bot` and `applications.commands`.
+5. Grant the bot:
    - View Channels
    - Read Message History
    - Send Messages
+   - Send Messages in Threads
+   - Embed Links
    - Attach Files
 6. Install the bot into guild `747184859386085380`.
 
-The bot registers `/scan export` globally on startup so the command can be used in a bot DM as well as the configured guild. The runtime authorization check is the security boundary: only user `245983842672967680` is allowed by default.
+The bot deletes only messages it authored, so it does not need Manage Messages for its own warning cleanup.
 
 ## Install
 
@@ -45,21 +47,7 @@ The bot registers `/scan export` globally on startup so the command can be used 
 npm install
 ```
 
-Create `.env` from `.env.example`.
-
-### Linux or macOS
-
-```bash
-cp .env.example .env
-```
-
-### PowerShell
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Set `DISCORD_TOKEN` in `.env`:
+Copy `.env.example` to `.env` and set the token:
 
 ```dotenv
 DISCORD_TOKEN=your_bot_token_here
@@ -70,69 +58,68 @@ SCAN_EXPORT_ROLE_IDS=
 EXPORT_DIR=./exports
 ```
 
-`SCAN_EXPORT_ROLE_IDS` is deliberately empty. Later, selected moderator or administrator role IDs may be added as a comma-separated list to grant this specific command inside the configured guild. DMs always remain owner-only.
-
 ## Run
 
 ```bash
 npm start
 ```
 
-Keep the terminal open while the bot runs. When it reports that `/scan export` is registered, open a DM with the bot or use the command inside the configured guild:
+The bot registers `/scan export` globally and begins listening for newly created forum threads. Existing threads are not warned when the bot starts.
+
+## Live version guidance
+
+When a new configured forum thread does not contain exactly one Minecraft version and exactly one MCA Reborn version, the bot immediately replies to the starter and pings the thread owner.
+
+The warning explains what is missing or ambiguous, shows any valid version already detected, and suggests checking the launcher mod list, instance `mods` folder, or MCA JAR name. For example:
+
+```text
+mca-neoforge-7.7.23+1.21.1.jar
+```
+
+Here `7.7.23` is MCA Reborn and `1.21.1` is Minecraft.
+
+The bot checks again after 45 seconds. It sends at most two reminder pings and deletes the previous reminder before sending its replacement. Once an owner reply supplies both exact versions, the bot deletes its main warning and current reminder.
+
+Only the title, forum tags, starter post, and later messages from the thread owner count as version evidence. Staff examples and other bot messages cannot accidentally satisfy the check.
+
+## `info` help
+
+Typing `info` by itself in a configured support thread returns detailed help. Users without Manage Messages may receive this response once per minute per thread. Members with Manage Messages bypass the cooldown.
+
+For crashes, bugs, loading failures, or other technical problems, the help recommends `latest.log`. Logs are not mandatory for every support question.
+
+Common locations:
+
+- Windows: `%appdata%\.minecraft\logs\latest.log`
+- Linux: `~/.minecraft/logs/latest.log`
+- macOS: `~/Library/Application Support/minecraft/logs/latest.log`
+- CurseForge, Modrinth, and other launchers: open the affected profile/instance folder, then `logs/latest.log`
+
+Users can attach `latest.log` directly in Discord or upload its contents to `https://mclo.gs/` and share the resulting link. Server problems may need both client and server logs.
+
+## Historical export
+
+Run:
 
 ```text
 /scan export
 ```
 
-Only one export can run at a time. The bot processes threads sequentially and reports the final local path.
+The command scans configured forums, reads each starter plus the first five replies, and writes a timestamped JSONL file under `exports/`. Only one export runs at a time.
 
-The file name looks like:
-
-```text
-exports/mca-thread-scan-2026-07-25T20-32-07.123Z.jsonl
-```
-
-Upload that JSONL file into the ChatGPT conversation for review. The later phase will use the real examples to create regex rules and TDD regression fixtures.
-
-## Export contents
-
-Each line contains one thread record with:
-
-- Thread title, ID, URL, timestamps, tags, and state
-- Starter post plus the first five replies
-- Attachment filenames, content types, and sizes
-- Anonymized author kinds: `thread-owner`, `bot`, or `other`
-- Per-thread read errors
-
-Attachment files are not downloaded. Raw author user IDs are not exported. Likely Discord webhook URLs and bot tokens are redacted before the file is written.
-
-The export contains Discord message text, so keep it private and review it before sharing outside the project team.
+Records include thread metadata, tags, selected messages, attachment metadata, redacted sensitive strings, and detected Minecraft/MCA version information. Raw author IDs are not exported.
 
 ## Development
 
-Run the test suite:
-
 ```bash
 npm test
-```
-
-Run syntax checks:
-
-```bash
 npm run check
 ```
 
-The unit tests do not connect to Discord. They cover configuration, authorization, pagination, deduplication, reply selection, redaction, record creation, atomic file output, command locking, error handling, and attachment fallback.
+Tests do not connect to Discord. They cover authorization, pagination, exports, version detection, dynamic guidance, owner-only evidence, reminder timing and replacement, cleanup, `info` cooldowns, and event routing.
 
 ## Current limitations
 
-This release intentionally does not include:
-
-- Minecraft or MCA version regex detection
-- Semantic matching
-- Live thread monitoring
-- Automatic user warnings
-- Additional Discord commands
-- Server deployment
-
-Those will be considered after the historical JSONL corpus has been reviewed.
+- Reminder state is process-local and is lost when the bot restarts.
+- No retroactive live-warning scan runs on startup.
+- No persistent database or semantic/AI matching is used.
