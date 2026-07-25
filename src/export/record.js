@@ -1,3 +1,4 @@
+import { detectThreadVersions } from '../version/detect.js';
 import { redactSensitiveText } from './redact.js';
 
 function toIso(value) {
@@ -31,14 +32,22 @@ function mapMessage(message, position, threadOwnerId) {
 }
 
 export function createThreadRecord({ exportedAt, guildId, forum, thread, starter, replies = [], errors = [] }) {
+  const tags = [...(forum.tags ?? [])].map((tag) => ({ id: tag.id, name: tag.name }));
+  const messages = starter
+    ? [
+        mapMessage(starter, 'starter', thread.ownerId),
+        ...replies.map((message, index) => mapMessage(message, `reply-${index + 1}`, thread.ownerId)),
+      ]
+    : [];
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     exportedAt: toIso(exportedAt),
     guildId,
     forum: {
       id: forum.id,
       name: forum.name,
-      tags: [...(forum.tags ?? [])].map((tag) => ({ id: tag.id, name: tag.name })),
+      tags,
     },
     thread: {
       id: thread.id,
@@ -50,12 +59,8 @@ export function createThreadRecord({ exportedAt, guildId, forum, thread, starter
       locked: Boolean(thread.locked),
       appliedTagIds: [...(thread.appliedTagIds ?? [])],
     },
-    messages: starter
-      ? [
-          mapMessage(starter, 'starter', thread.ownerId),
-          ...replies.map((message, index) => mapMessage(message, `reply-${index + 1}`, thread.ownerId)),
-        ]
-      : [],
+    messages,
+    versions: detectThreadVersions({ tags, title: thread.name, messages }),
     errors: errors.map(String),
   };
 }
