@@ -45,12 +45,22 @@ function rejectedMca(result) {
   return raw;
 }
 
+function listedMinecraftVersions(catalogue) {
+  if (!Array.isArray(catalogue) || catalogue.length === 0) return null;
+  return new Set(
+    catalogue
+      .filter((entry) => entry?.status === 'listed')
+      .flatMap((entry) => entry.minecraftVersions ?? []),
+  );
+}
+
 function diagnosisFingerprint(diagnosis) {
   return JSON.stringify({
     minecraft: diagnosis.minecraftField,
     mca: diagnosis.mcaField,
     loader: diagnosis.loaderField,
     compatibility: diagnosis.compatibility,
+    minecraftEligible: diagnosis.minecraftEligible,
     missing: diagnosis.missing,
     recommendation: diagnosis.recommendation?.status ?? null,
     recommendedVersion: diagnosis.recommendation?.entry?.mcaVersion ?? null,
@@ -79,6 +89,11 @@ export function diagnoseVersions(result, catalogue = null) {
 
   if ((result.vague ?? []).length > 0) reasons.push('Words such as “latest” or “newest” are not an exact version.');
 
+  const publicMinecraftVersions = listedMinecraftVersions(catalogue);
+  const minecraftPubliclyListed = minecraftField.status === 'present'
+    ? publicMinecraftVersions === null || publicMinecraftVersions.has(minecraftField.value)
+    : false;
+  let minecraftEligible = minecraftField.status === 'present' ? minecraftPubliclyListed : false;
   const exactFields = minecraftField.status === 'present' && mcaField.status === 'present';
   let compatibility = exactFields ? 'catalogue-unavailable' : 'not-checked';
   let recommendation = null;
@@ -98,18 +113,31 @@ export function diagnoseVersions(result, catalogue = null) {
       missing.push(`Compatible MCA Reborn version for Minecraft \`${minecraftField.value}\``);
       const loaderText = loaderField.status === 'present' ? ` with ${loaderField.value}` : '';
       reasons.push(`MCA Reborn \`${mcaField.value}\` does not match Minecraft \`${minecraftField.value}\`${loaderText} in the public Modrinth catalogue.`);
+    } else if (compatibility === 'unknown-build' && !minecraftPubliclyListed && resolved.pair?.explicit) {
+      minecraftEligible = true;
+      complete = true;
+    } else if (!minecraftPubliclyListed && publicMinecraftVersions !== null) {
+      complete = false;
+      missing.push('Minecraft version listed for MCA Reborn on Modrinth');
+      reasons.push(`Minecraft \`${minecraftField.value}\` is not listed for any public MCA Reborn release on Modrinth.`);
     } else {
       complete = true;
     }
   } else if (minecraftField.status === 'present') {
-    recommendation = findLatestCompatible(catalogue, {
-      minecraftVersion: minecraftField.value,
-      loader: loaderField.status === 'present' ? loaderField.value : null,
-    });
+    if (!minecraftPubliclyListed && publicMinecraftVersions !== null) {
+      minecraftEligible = false;
+      missing.push('Minecraft version listed for MCA Reborn on Modrinth');
+      reasons.push(`Minecraft \`${minecraftField.value}\` is not listed for any public MCA Reborn release on Modrinth.`);
+    } else {
+      recommendation = findLatestCompatible(catalogue, {
+        minecraftVersion: minecraftField.value,
+        loader: loaderField.status === 'present' ? loaderField.value : null,
+      });
+    }
   }
 
   const detected = unique([
-    ...minecraft.detected,
+    ...(minecraftEligible ? minecraft.detected : []),
     ...mca.detected,
     ...(loaderField.status === 'present' ? [`Loader: \`${loaderField.value}\``] : []),
   ]);
@@ -120,6 +148,8 @@ export function diagnoseVersions(result, catalogue = null) {
     detected,
     reasons: unique(reasons),
     compatibility,
+    minecraftEligible,
+    minecraftPubliclyListed,
     recommendation,
     minecraftVersion: minecraftField.value,
     mcaVersion: mcaField.value,

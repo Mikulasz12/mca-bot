@@ -37,3 +37,76 @@ test('explains vague latest wording', () => {
   const diagnosis = diagnoseVersions(result({ vague: ['latest'] }));
   assert.match(diagnosis.reasons.join(' '), /exact version/i);
 });
+
+import { normaliseModrinthVersions } from '../src/modrinth/catalogue.js';
+import { detectThreadVersions } from '../src/version/detect.js';
+
+const catalogue = normaliseModrinthVersions([
+  {
+    id: 'good', version_number: '7.7.22+1.21.1', game_versions: ['1.21.1'], loaders: ['neoforge'],
+    version_type: 'release', status: 'listed', date_published: '2026-07-20T00:00:00Z', files: [{ primary: true, filename: 'good.jar' }],
+  },
+  {
+    id: 'new', version_number: '7.9.6+26.1.2', game_versions: ['26.1.2'], loaders: ['fabric'],
+    version_type: 'release', status: 'listed', date_published: '2026-07-21T00:00:00Z', files: [{ primary: true, filename: 'new.jar' }],
+  },
+]);
+
+function detected(messages) {
+  return detectThreadVersions({
+    messages: messages.map((content, index) => ({
+      position: index === 0 ? 'starter' : `reply-${index}`,
+      authorKind: 'thread-owner', content, attachments: [],
+    })),
+  });
+}
+
+test('uses resolved latest pair rather than accumulated raw ambiguity', () => {
+  const diagnosis = diagnoseVersions(detected(['26.1.2', '7.7.22+1.21.1']), catalogue);
+  assert.equal(diagnosis.minecraftVersion, '1.21.1');
+  assert.equal(diagnosis.mcaVersion, '7.7.22');
+  assert.equal(diagnosis.complete, true);
+});
+
+test('keeps a known public Minecraft mismatch incomplete and recommends the matching branch', () => {
+  const diagnosis = diagnoseVersions(detected(['7.7.22+26.1.2', 'fabric']), catalogue);
+  assert.equal(diagnosis.compatibility, 'known-incompatible');
+  assert.equal(diagnosis.complete, false);
+  assert.match(diagnosis.reasons.join(' '), /does not match/i);
+  assert.equal(diagnosis.recommendation.entry.mcaVersion, '7.9.6');
+});
+
+test('accepts an exact unknown build without blocking support', () => {
+  const diagnosis = diagnoseVersions(detected(['9.9.9+26.1.2']), catalogue);
+  assert.equal(diagnosis.compatibility, 'unknown-build');
+  assert.equal(diagnosis.complete, true);
+});
+
+test('falls back to syntax-only completion when catalogue is unavailable', () => {
+  const diagnosis = diagnoseVersions(detected(['7.7.22+1.21.1']), []);
+  assert.equal(diagnosis.compatibility, 'catalogue-unavailable');
+  assert.equal(diagnosis.complete, true);
+});
+
+test('fingerprint changes for meaningful version progress but not unrelated replies', () => {
+  const first = diagnoseVersions(detected(['26.1.2']), catalogue);
+  const unrelated = diagnoseVersions(detected(['26.1.2', 'h']), catalogue);
+  const progressed = diagnoseVersions(detected(['26.1.2', '7.9.6']), catalogue);
+  assert.equal(first.fingerprint, unrelated.fingerprint);
+  assert.notEqual(first.fingerprint, progressed.fingerprint);
+});
+
+test('does not accept a standalone Minecraft version absent from listed Modrinth game versions', () => {
+  const diagnosis = diagnoseVersions(detected(['26.9.9']), catalogue);
+  assert.equal(diagnosis.complete, false);
+  assert.equal(diagnosis.minecraftEligible, false);
+  assert.equal(diagnosis.detected.some((value) => value.includes('26.9.9')), false);
+  assert.match(diagnosis.missing.join(' '), /Minecraft version/i);
+  assert.match(diagnosis.reasons.join(' '), /not listed.*Modrinth/i);
+});
+
+test('keeps an explicit unknown development pair eligible even when its Minecraft branch is unpublished', () => {
+  const diagnosis = diagnoseVersions(detected(['9.9.9+26.9.9']), catalogue);
+  assert.equal(diagnosis.compatibility, 'unknown-build');
+  assert.equal(diagnosis.complete, true);
+});

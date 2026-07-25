@@ -1,3 +1,8 @@
+function editablePayload(payload) {
+  const { reply: _reply, ...editable } = payload ?? {};
+  return editable;
+}
+
 function isUnknownMessage(error) {
   return error?.code === 10008 || error?.rawError?.code === 10008;
 }
@@ -22,8 +27,10 @@ export function createGuidanceDiscordAdapter(client) {
 
     async editMessage(threadId, messageId, payload) {
       const thread = await fetchThread(threadId);
-      if (!thread?.messages?.edit) throw new Error(`Thread ${threadId} cannot edit messages`);
-      return thread.messages.edit(messageId, payload);
+      if (!thread?.messages?.fetch) throw new Error(`Thread ${threadId} cannot fetch messages`);
+      const message = await thread.messages.fetch(messageId);
+      if (!message?.edit) throw new Error(`Message ${messageId} cannot be edited`);
+      return message.edit(editablePayload(payload));
     },
 
     async deleteMessage(threadId, messageId) {
