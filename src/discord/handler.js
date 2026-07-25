@@ -1,3 +1,5 @@
+import { MessageFlags } from 'discord.js';
+
 import { authorizeScanExport } from '../access.js';
 import { createThreadRecord } from '../export/record.js';
 import { collectThreads } from '../scan/collect-threads.js';
@@ -55,7 +57,7 @@ export function createInteractionHandler({ config, adapter, writerFactory, now =
     if (!authorization.allowed) {
       await interaction.reply({
         content: 'You are not authorized to run this command here.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -63,7 +65,7 @@ export function createInteractionHandler({ config, adapter, writerFactory, now =
     if (scanRunning) {
       await interaction.reply({
         content: 'A scan export is already running.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -72,7 +74,9 @@ export function createInteractionHandler({ config, adapter, writerFactory, now =
     let writer;
 
     try {
-      await interaction.deferReply({ ephemeral: Boolean(interaction.guildId) });
+      await interaction.deferReply(
+        interaction.guildId ? { flags: MessageFlags.Ephemeral } : {},
+      );
 
       const exportedAt = now();
       writer = await writerFactory({ exportDir: config.exportDir, now: exportedAt });
