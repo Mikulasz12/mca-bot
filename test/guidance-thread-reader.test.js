@@ -83,3 +83,20 @@ test('fails after three starter attempts', async () => {
   const reader = createThreadReader({ forumChannelIds: ['forum-1'], sleep: async () => {} });
   await assert.rejects(() => reader.read(makeThread({ starterFailures: 3 })), /Unknown Message/);
 });
+
+test('retries when Discord temporarily returns no starter message', async () => {
+  const thread = makeThread();
+  const original = thread.fetchStarterMessage.bind(thread);
+  let calls = 0;
+  thread.fetchStarterMessage = async () => {
+    calls += 1;
+    if (calls === 1) return null;
+    return original();
+  };
+  const waits = [];
+  const reader = createThreadReader({ forumChannelIds: ['forum-1'], sleep: async (ms) => waits.push(ms) });
+  const snapshot = await reader.read(thread);
+  assert.equal(snapshot.starterId, 'thread-1');
+  assert.equal(calls, 2);
+  assert.deepEqual(waits, [250]);
+});
