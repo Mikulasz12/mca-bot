@@ -1,0 +1,18 @@
+{
+  "name": "mca-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Owner-controlled Discord forum thread corpus exporter for Minecraft Comes Alive support channels.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test",
+    "check": "node scripts/check-syntax.js"
+  },
+  "dependencies": {
+    "discord.js": "14.16.3"
+  }
+}
