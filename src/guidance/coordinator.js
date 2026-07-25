@@ -10,6 +10,7 @@ export function createGuidanceCoordinator({
   reader,
   adapter,
   catalogueService = { catalogue: () => [], revision: () => 0 },
+  minecraftService = { catalogue: () => [], revision: () => 0 },
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   reminderDelayMs = 45_000,
@@ -57,6 +58,7 @@ export function createGuidanceCoordinator({
     return diagnoseVersions(
       detectThreadVersions(snapshot.detectorInput),
       catalogueService.catalogue(),
+      minecraftService.catalogue(),
     );
   }
 
@@ -117,6 +119,7 @@ export function createGuidanceCoordinator({
       if (!changed) return;
       state.lastDiagnosisFingerprint = diagnosis.fingerprint;
       state.catalogueRevision = catalogueService.revision();
+      state.minecraftRevision = minecraftService.revision();
       state.invalidAttemptCount += 1;
       await updateMain(state, snapshot, diagnosis);
 
@@ -147,6 +150,7 @@ export function createGuidanceCoordinator({
     if (changed) {
       state.lastDiagnosisFingerprint = diagnosis.fingerprint;
       state.catalogueRevision = catalogueService.revision();
+      state.minecraftRevision = minecraftService.revision();
       await updateMain(state, snapshot, diagnosis);
     }
 
@@ -221,6 +225,7 @@ export function createGuidanceCoordinator({
         invalidAttemptCount: 0,
         lastDiagnosisFingerprint: diagnosis.fingerprint,
         catalogueRevision: catalogueService.revision(),
+        minecraftRevision: minecraftService.revision(),
         timer: null,
         timerGeneration: 0,
         checking: null,

@@ -105,8 +105,70 @@ test('does not accept a standalone Minecraft version absent from listed Modrinth
   assert.match(diagnosis.reasons.join(' '), /not listed.*Modrinth/i);
 });
 
+test('does not accept a bare MCA-shaped version absent from listed Modrinth releases', () => {
+  const diagnosis = diagnoseVersions(detected(['7.8.304']), catalogue);
+  assert.equal(diagnosis.complete, false);
+  assert.equal(diagnosis.mcaEligible, false);
+  assert.equal(diagnosis.detected.some((value) => value.includes('7.8.304')), false);
+  assert.match(diagnosis.missing.join(' '), /MCA Reborn version/i);
+  assert.match(diagnosis.invalid.join(' '), /7\.8\.304.*not a listed public release/i);
+  assert.match(diagnosis.invalid.join(' '), /complete MCA JAR filename/i);
+});
+
+test('reports unsupported Minecraft and unverified bare MCA values as invalid rather than missing detections', () => {
+  const diagnosis = diagnoseVersions(detected(['7.8.304', '1.23.4']), catalogue);
+  assert.equal(diagnosis.complete, false);
+  assert.equal(diagnosis.minecraftEligible, false);
+  assert.equal(diagnosis.mcaEligible, false);
+  assert.deepEqual(diagnosis.detected, []);
+  assert.match(diagnosis.invalid.join(' '), /Minecraft `1\.23\.4`.*not supported/i);
+  assert.match(diagnosis.invalid.join(' '), /MCA Reborn `7\.8\.304`.*not a listed public release/i);
+});
+
 test('keeps an explicit unknown development pair eligible even when its Minecraft branch is unpublished', () => {
   const diagnosis = diagnoseVersions(detected(['9.9.9+26.9.9']), catalogue);
   assert.equal(diagnosis.compatibility, 'unknown-build');
   assert.equal(diagnosis.complete, true);
+});
+
+const minecraftManifest = [
+  Object.freeze({ id: '1.21.1', canonicalId: '1.21.1', type: 'release' }),
+  Object.freeze({ id: '26.1.2', canonicalId: '26.1.2', type: 'release' }),
+  Object.freeze({ id: '26.2', canonicalId: '26.2', type: 'release' }),
+];
+
+test('rejects a version absent from Mojang without special-casing its number', () => {
+  const diagnosis = diagnoseVersions(detected(['1.23.4']), catalogue, minecraftManifest);
+  assert.equal(diagnosis.minecraftValidity, 'unknown-minecraft-version');
+  assert.equal(diagnosis.minecraftEligible, false);
+  assert.equal(diagnosis.detected.some((value) => value.includes('1.23.4')), false);
+  assert.match(diagnosis.missing.join(' '), /recognised Minecraft Java version/i);
+  assert.match(diagnosis.reasons.join(' '), /official Mojang.*manifest/i);
+});
+
+test('distinguishes a real Minecraft version with no public MCA support', () => {
+  const diagnosis = diagnoseVersions(detected(['26.2']), catalogue, minecraftManifest);
+  assert.equal(diagnosis.minecraftValidity, 'unsupported-by-mca');
+  assert.equal(diagnosis.minecraftEligible, false);
+  assert.match(diagnosis.reasons.join(' '), /exists.*no listed MCA Reborn release/i);
+});
+
+test('does not accept a bare unknown MCA-shaped number', () => {
+  const diagnosis = diagnoseVersions(detected(['1.21.1', '7.8.304']), catalogue, minecraftManifest);
+  assert.equal(diagnosis.mcaValidity, 'unverified-bare-build');
+  assert.equal(diagnosis.mcaEligible, false);
+  assert.equal(diagnosis.complete, false);
+  assert.equal(diagnosis.detected.some((value) => value.includes('7.8.304')), false);
+  assert.match(diagnosis.reasons.join(' '), /complete MCA JAR filename|complete MCA.*Minecraft pair/i);
+});
+
+test('accepts an unknown MCA build only with a strong pair and Mojang-valid Minecraft version', () => {
+  const accepted = diagnoseVersions(detected(['7.8.304+1.21.1']), catalogue, minecraftManifest);
+  assert.equal(accepted.compatibility, 'unknown-build');
+  assert.equal(accepted.mcaValidity, 'unknown-build-with-strong-evidence');
+  assert.equal(accepted.complete, true);
+
+  const rejected = diagnoseVersions(detected(['7.8.304+1.23.4']), catalogue, minecraftManifest);
+  assert.equal(rejected.minecraftValidity, 'unknown-minecraft-version');
+  assert.equal(rejected.complete, false);
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildInfoReply, buildMainWarning, buildReminder } from '../src/guidance/messages.js';
+import { buildInfoReply, buildMainWarning, buildProgressAcknowledgement, buildReminder } from '../src/guidance/messages.js';
 
 const diagnosis = {
   complete: false,
@@ -43,4 +43,68 @@ test('info reply explains versions, logs, launchers, and optionality', () => {
   assert.match(text, /mclo\.gs/i);
   assert.match(text, /not required for every/i);
   assert.deepEqual(payload.reply, { messageReference: '789', failIfNotExists: false });
+});
+
+test('progress acknowledgement thanks the owner and asks only for what remains', () => {
+  const payload = buildProgressAcknowledgement({ ownerId: '123', messageId: '999', diagnosis, invalidAttemptCount: 1 });
+  assert.equal(payload.content.startsWith('<@123>'), true);
+  assert.match(payload.content, /detected Minecraft/i);
+  assert.match(payload.content, /still need.*MCA Reborn/i);
+  assert.deepEqual(payload.reply, { messageReference: '999', failIfNotExists: false });
+});
+
+test('known incompatibility acknowledgement recommends the exact compatible Modrinth version', () => {
+  const incompatible = {
+    ...diagnosis,
+    compatibility: 'known-incompatible',
+    minecraftVersion: '26.1.2',
+    mcaVersion: '7.7.22',
+    reasons: ['MCA Reborn `7.7.22` does not match Minecraft `26.1.2`.'],
+    recommendation: {
+      status: 'direct',
+      entry: { mcaVersion: '7.9.6', url: 'https://modrinth.com/mod/minecraft-comes-alive-reborn/version/good' },
+      loaders: ['fabric'],
+    },
+  };
+  const payload = buildProgressAcknowledgement({ ownerId: '123', messageId: '999', diagnosis: incompatible, invalidAttemptCount: 2 });
+  const text = JSON.stringify(payload);
+  assert.match(text, /7\.9\.6/);
+  assert.match(text, /modrinth\.com/);
+  assert.match(text, /26\.1\.2/);
+});
+
+test('third distinct invalid attempt escalates to jar filename screenshot and log help without shaming', () => {
+  const payload = buildProgressAcknowledgement({ ownerId: '123', messageId: '999', diagnosis, invalidAttemptCount: 3 });
+  const text = JSON.stringify(payload);
+  assert.match(text, /complete MCA JAR filename/i);
+  assert.match(text, /screenshot/i);
+  assert.match(text, /latest\.log/i);
+  assert.doesNotMatch(text, /failed|wrong again|cannot follow/i);
+});
+
+test('invalid catalogue values are explained directly instead of saying both versions are merely missing', () => {
+  const invalidDiagnosis = {
+    complete: false,
+    missing: [
+      'a Minecraft version supported by MCA Reborn',
+      'a listed MCA Reborn version or complete development JAR filename',
+    ],
+    detected: [],
+    reasons: [],
+    invalid: [
+      'Minecraft `1.23.4` is not supported by any listed MCA Reborn release on Modrinth.',
+      'MCA Reborn `7.8.304` is not a listed public release. If this is a development build, send the complete MCA JAR filename or an explicit MCA+Minecraft pair.',
+    ],
+  };
+  const payload = buildProgressAcknowledgement({
+    ownerId: '123',
+    messageId: '999',
+    diagnosis: invalidDiagnosis,
+    invalidAttemptCount: 2,
+  });
+  assert.match(payload.content, /couldn.t verify/i);
+  assert.match(payload.content, /1\.23\.4/);
+  assert.match(payload.content, /7\.8\.304/);
+  assert.match(payload.content, /complete MCA JAR filename/i);
+  assert.doesNotMatch(payload.content, /I still need MCA Reborn version and Minecraft version listed/i);
 });

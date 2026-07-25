@@ -19,6 +19,8 @@ import { createGuidanceDiscordAdapter } from './guidance/discord-adapter.js';
 import { createInfoHandler } from './guidance/info-handler.js';
 import { registerGuidanceEvents } from './guidance/runtime.js';
 import { createThreadReader } from './guidance/thread-reader.js';
+import { createMinecraftManifestClient } from './minecraft/client.js';
+import { createMinecraftVersionService } from './minecraft/service.js';
 import { createModrinthClient } from './modrinth/client.js';
 import { createCatalogueService } from './modrinth/service.js';
 
@@ -30,7 +32,12 @@ try {
 
 const config = loadConfig(process.env);
 const catalogueService = createCatalogueService({ client: createModrinthClient() });
-await catalogueService.start();
+const minecraftService = createMinecraftVersionService({ client: createMinecraftManifestClient() });
+await Promise.all([catalogueService.start(), minecraftService.start()]);
+await Promise.all([
+  catalogueService.status().available ? null : catalogueService.refresh({ reason: 'startup-required' }),
+  minecraftService.status().available ? null : minecraftService.refresh({ reason: 'startup-required' }),
+]);
 
 const client = new Client({
   intents: [
@@ -50,6 +57,7 @@ const handleScanInteraction = createInteractionHandler({
 const handleCacheInteraction = createCacheInteractionHandler({
   config,
   catalogueService,
+  minecraftService,
 });
 
 const guidanceAdapter = createGuidanceDiscordAdapter(client);
@@ -58,6 +66,7 @@ const guidanceCoordinator = createGuidanceCoordinator({
   reader: threadReader,
   adapter: guidanceAdapter,
   catalogueService,
+  minecraftService,
 });
 const infoHandler = createInfoHandler({
   forumChannelIds: config.forumChannelIds,
@@ -112,6 +121,7 @@ async function shutdown(signal) {
   shuttingDown = true;
   console.log(`Received ${signal}; shutting down.`);
   catalogueService.stop();
+  minecraftService.stop();
   client.destroy();
 }
 
@@ -122,5 +132,6 @@ try {
   await client.login(config.token);
 } catch (error) {
   catalogueService.stop();
+  minecraftService.stop();
   throw error;
 }

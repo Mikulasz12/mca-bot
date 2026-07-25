@@ -76,7 +76,9 @@ export function buildProgressAcknowledgement({ ownerId, diagnosis, messageId, in
   if (detected.length > 0) content += ` — I detected ${detected.join(' and ')}`;
   content += '.';
 
-  if (diagnosis.compatibility === 'known-incompatible') {
+  if ((diagnosis.invalid ?? []).length > 0) {
+    content += ` I couldn’t verify the version information you sent: ${diagnosis.invalid.join(' ')}`;
+  } else if (diagnosis.compatibility === 'known-incompatible') {
     content += ` ${diagnosis.reasons.join(' ')}`;
   } else if ((diagnosis.missing ?? []).length > 0) {
     content += ` I still need ${diagnosis.missing.join(' and ')}.`;

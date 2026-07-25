@@ -7,7 +7,7 @@ import {
 
 export const cacheCommandData = new SlashCommandBuilder()
   .setName('cache')
-  .setDescription('MCA Modrinth catalogue cache tools')
+  .setDescription('MCA and Minecraft version cache tools')
   .addSubcommand((subcommand) =>
     subcommand.setName('status').setDescription('Show the MCA Modrinth catalogue cache status'),
   )
