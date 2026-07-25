@@ -1,15 +1,22 @@
 # MCA Bot
 
-A private Discord bot for Minecraft Comes Alive support forums. It can export historical support threads and guide new thread owners when exact Minecraft or MCA Reborn versions are missing.
+A private Discord bot for Minecraft Comes Alive support forums. It exports historical support threads, guides new thread owners toward usable version details, and checks public MCA release compatibility through a cached Modrinth catalogue.
 
 ## Features
 
 - Owner-controlled `/scan export` command
 - Immediate checks for new threads in the configured support forums
-- Dynamic version guidance based on what was detected
+- Conversation-aware Minecraft, MCA Reborn, and loader detection
+- Informal pair support such as `7.7.23+1.21.1`
+- Later corrections supersede earlier version answers
+- Public MCA/Minecraft/loader compatibility checks through Modrinth
+- Branch- and loader-correct latest release recommendations
+- Unknown development or unpublished builds are accepted rather than rejected
+- Immediate acknowledgement when a partial answer meaningfully improves the thread
 - Up to two replaceable reminder pings, 45 seconds apart
-- Automatic warning/reminder cleanup once both exact versions are provided
+- Automatic warning/reminder cleanup once usable versions are provided
 - Standalone `info` keyword for version and log help
+- Administrator-only `/cache status` and `/cache update` commands
 - No AI services, automatic locking, archiving, or deletion of user messages
 
 The configured forums are:
@@ -39,7 +46,7 @@ The configured forums are:
    - Attach Files
 6. Install the bot into guild `747184859386085380`.
 
-The bot deletes only messages it authored, so it does not need Manage Messages for its own warning cleanup.
+The bot deletes only messages it authored, so it does not need Manage Messages for warning cleanup. `/cache` is restricted to members whose effective guild permissions include Administrator; no role ID is hardcoded.
 
 ## Install
 
@@ -64,23 +71,65 @@ EXPORT_DIR=./exports
 npm start
 ```
 
-The bot registers `/scan export` globally and begins listening for newly created forum threads. Existing threads are not warned when the bot starts.
+The bot registers `/scan export` globally, registers `/cache` immediately in guild `747184859386085380`, loads the local Modrinth cache, and begins listening for newly created forum threads. Existing threads are not warned when the bot starts.
 
 ## Live version guidance
 
-When a new configured forum thread does not contain exactly one Minecraft version and exactly one MCA Reborn version, the bot immediately replies to the starter and pings the thread owner.
+When a new configured forum thread lacks usable Minecraft or MCA Reborn version information, the bot immediately replies to the starter and pings the thread owner.
 
-The warning explains what is missing or ambiguous, shows any valid version already detected, and suggests checking the launcher mod list, instance `mods` folder, or MCA JAR name. For example:
+It understands labelled values, separate replies, full JAR filenames, and informal pairs such as:
 
 ```text
+7.7.23+1.21.1
 mca-neoforge-7.7.23+1.21.1.jar
 ```
 
-Here `7.7.23` is MCA Reborn and `1.21.1` is Minecraft.
+A later exact answer supersedes an older answer. For example, a final `7.7.23+26.1.2` correction replaces an earlier `7.7.23+1.21.1` pair. Ordinary replies such as `h` do not alter the detected state or reset reminder timing.
 
-The bot checks again after 45 seconds. It sends at most two reminder pings and deletes the previous reminder before sending its replacement. Once an owner reply supplies both exact versions, the bot deletes its main warning and current reminder.
+When a reply adds meaningful information, the bot updates its main warning immediately, replies to that message with what was accepted and what remains missing, and restarts the 45-second inactivity timer without resetting the number of scheduled reminders already sent.
 
-Only the title, forum tags, starter post, and later messages from the thread owner count as version evidence. Staff examples and other bot messages cannot accidentally satisfy the check.
+The bot keeps at most one main guidance embed and one acknowledgement/reminder message. It sends at most two scheduled reminder pings and deletes the previous secondary message before replacing it.
+
+Only the title, forum tags, starter post, and later messages or attachment filenames from the thread owner count as evidence. Staff examples and other bot messages cannot accidentally satisfy the check.
+
+## Modrinth compatibility
+
+The bot caches the MCA Reborn public version catalogue from Modrinth and checks that a known public MCA release supports the supplied Minecraft version and known loader.
+
+- A verified public combination completes normally.
+- A known public mismatch remains incomplete and receives a compatible recommendation for that exact Minecraft branch and loader.
+- An MCA version absent from the public catalogue is treated as a possible development or unpublished build and is **not rejected**.
+- When the loader is unknown and loader-specific latest releases differ, the bot asks whether the player uses Fabric, Forge, NeoForge, or Quilt instead of guessing.
+
+The catalogue is stored locally at:
+
+```text
+data/modrinth-mca-versions.json
+```
+
+It is refreshed when missing or stale and then every six hours. Network or Modrinth failures preserve the previous cache. Discord replies never wait for a background refresh; without a usable cache, guidance falls back to syntax-only detection.
+
+## Administrator cache commands
+
+These guild-only commands require the effective Administrator permission:
+
+```text
+/cache status
+/cache update
+```
+
+`/cache status` reports:
+
+- Modrinth version records indexed
+- Listed public records
+- Unique MCA versions
+- Supported Minecraft-version count
+- Loader count and names
+- Cache source, freshness, revision, and refresh state
+- Last successful update and next scheduled refresh
+- Rate-limit, disabled-refresh, or last-error diagnostics when applicable
+
+`/cache update` requests a manual single-flight refresh. Concurrent refresh requests share the existing operation, and a failed update keeps the previous cache available.
 
 ## `info` help
 
@@ -107,7 +156,7 @@ Run:
 
 The command scans configured forums, reads each starter plus the first five replies, and writes a timestamped JSONL file under `exports/`. Only one export runs at a time.
 
-Records include thread metadata, tags, selected messages, attachment metadata, redacted sensitive strings, and detected Minecraft/MCA version information. Raw author IDs are not exported.
+Records retain raw version evidence for corpus analysis and also include resolved version information. Raw author IDs are not exported, attachments are not downloaded, and likely webhook/token strings are redacted.
 
 ## Development
 
@@ -116,10 +165,11 @@ npm test
 npm run check
 ```
 
-Tests do not connect to Discord. They cover authorization, pagination, exports, version detection, dynamic guidance, owner-only evidence, reminder timing and replacement, cleanup, `info` cooldowns, and event routing.
+Tests do not connect to Discord or Modrinth. They use injected fake timers, fetch responses, cache stores, Discord adapters, and interactions to cover exports, conversation resolution, catalogue compatibility, cache failure handling, dynamic guidance, reminder races, `info` cooldowns, Administrator cache authorization, and event routing.
 
 ## Current limitations
 
 - Reminder state is process-local and is lost when the bot restarts.
 - No retroactive live-warning scan runs on startup.
-- No persistent database or semantic/AI matching is used.
+- The Modrinth cache covers public MCA Reborn releases only; development and private builds rely on syntax/JAR evidence.
+- No persistent Discord workflow database or semantic/AI matching is used.

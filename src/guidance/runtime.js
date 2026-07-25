@@ -28,4 +28,12 @@ export function registerGuidanceEvents(client, { coordinator, infoHandler, adapt
       await coordinator.onOwnerMessage(message);
     });
   });
+
+  client.on(Events.MessageUpdate, (_oldMessage, newMessage) => {
+    run(`Failed to handle edited message ${newMessage.id}`, () => coordinator.onOwnerEvidenceChanged(newMessage));
+  });
+
+  client.on(Events.MessageDelete, (message) => {
+    run(`Failed to handle deleted message ${message.id}`, () => coordinator.onOwnerEvidenceChanged(message));
+  });
 }

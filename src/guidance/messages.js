@@ -1,5 +1,7 @@
 const WARNING_COLOR = 0xf0b232;
 const INFO_COLOR = 0x5865f2;
+const SUCCESS_COLOR = 0x57f287;
+const MODRINTH_VERSIONS_URL = 'https://modrinth.com/mod/minecraft-comes-alive-reborn/versions';
 
 function ownerMentions(ownerId) {
   return { users: [ownerId], roles: [], parse: [], repliedUser: false };
@@ -17,21 +19,26 @@ function list(values) {
   return values.map((value) => `• ${value}`).join('\n');
 }
 
+function recommendationText(diagnosis) {
+  const recommendation = diagnosis.recommendation;
+  if (!recommendation || recommendation.status === 'none') return null;
+  if (recommendation.status === 'loader-required') {
+    return `Choose whether you use ${recommendation.loaders.map((loader) => `**${loader}**`).join(', ')}, then get the newest MCA release for Minecraft \`${diagnosis.minecraftVersion}\` from ${recommendation.url ?? MODRINTH_VERSIONS_URL}.`;
+  }
+  if (recommendation.status === 'direct' && recommendation.entry) {
+    const loaders = recommendation.loaders?.length ? ` for ${recommendation.loaders.join(', ')}` : '';
+    return `The newest compatible public release is **MCA Reborn ${recommendation.entry.mcaVersion}** for Minecraft \`${diagnosis.minecraftVersion}\`${loaders}: ${recommendation.entry.url}`;
+  }
+  return null;
+}
+
 export function buildMainWarning({ ownerId, diagnosis, starterId }) {
-  const fields = [
-    {
-      name: 'Missing or unclear',
-      value: list(diagnosis.missing),
-    },
-  ];
-
-  if (diagnosis.detected.length > 0) {
-    fields.push({ name: 'Already detected', value: list(diagnosis.detected) });
-  }
-
-  if (diagnosis.reasons.length > 0) {
-    fields.push({ name: 'Why', value: list(diagnosis.reasons) });
-  }
+  const fields = [];
+  if (diagnosis.missing.length > 0) fields.push({ name: 'Missing or unclear', value: list(diagnosis.missing) });
+  if (diagnosis.detected.length > 0) fields.push({ name: 'Already detected', value: list(diagnosis.detected) });
+  if (diagnosis.reasons.length > 0) fields.push({ name: 'Why', value: list(diagnosis.reasons) });
+  const recommendation = recommendationText(diagnosis);
+  if (recommendation) fields.push({ name: 'Compatible Modrinth release', value: recommendation });
 
   fields.push(
     {
@@ -63,6 +70,43 @@ export function buildMainWarning({ ownerId, diagnosis, starterId }) {
   };
 }
 
+export function buildProgressAcknowledgement({ ownerId, diagnosis, messageId, invalidAttemptCount = 1 }) {
+  const detected = diagnosis.detected ?? [];
+  let content = `<@${ownerId}> Thanks`;
+  if (detected.length > 0) content += ` — I detected ${detected.join(' and ')}`;
+  content += '.';
+
+  if (diagnosis.compatibility === 'known-incompatible') {
+    content += ` ${diagnosis.reasons.join(' ')}`;
+  } else if ((diagnosis.missing ?? []).length > 0) {
+    content += ` I still need ${diagnosis.missing.join(' and ')}.`;
+  }
+
+  const fields = [];
+  const recommendation = recommendationText(diagnosis);
+  if (recommendation) fields.push({ name: 'Recommended compatible release', value: recommendation });
+
+  if (invalidAttemptCount >= 2) {
+    fields.push({
+      name: 'Check the MCA file',
+      value: 'A complete file name such as `mca-neoforge-7.7.23+1.21.1.jar` shows the loader, MCA version, and Minecraft version together.',
+    });
+  }
+  if (invalidAttemptCount >= 3) {
+    fields.push({
+      name: 'Send what you can find',
+      value: `Attach or paste the complete MCA JAR filename from the instance \`mods\` folder. A screenshot of the launcher’s installed-mod entry also works. For technical problems, also attach \`latest.log\` or share an https://mclo.gs/ link. MCA releases: ${MODRINTH_VERSIONS_URL}`,
+    });
+  }
+
+  return {
+    content,
+    allowedMentions: ownerMentions(ownerId),
+    reply: replyTo(messageId),
+    embeds: fields.length > 0 ? [{ color: invalidAttemptCount >= 3 ? INFO_COLOR : SUCCESS_COLOR, fields }] : [],
+  };
+}
+
 export function buildReminder({ ownerId, diagnosis, starterId, reminderNumber }) {
   const needed = diagnosis.missing.length > 0 ? diagnosis.missing.join(' and ') : 'the exact version information';
   return {
@@ -86,7 +130,7 @@ export function buildInfoReply({ messageId }) {
           {
             name: 'Find the versions',
             value:
-              'Open your launcher’s mod list or the instance/profile `mods` folder. In `mca-neoforge-7.7.23+1.21.1.jar`, `7.7.23` is MCA Reborn and `1.21.1` is Minecraft. “Latest” and “newest” are not exact versions.',
+              `Open your launcher’s mod list or the instance/profile \`mods\` folder. In \`mca-neoforge-7.7.23+1.21.1.jar\`, \`7.7.23\` is MCA Reborn and \`1.21.1\` is Minecraft. “Latest” and “newest” are not exact versions. Get the latest release matching your Minecraft version and loader from ${MODRINTH_VERSIONS_URL}.`,
           },
           {
             name: 'When a log helps',

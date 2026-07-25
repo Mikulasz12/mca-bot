@@ -3,10 +3,13 @@ import {
   Events,
   GatewayIntentBits,
   MessageFlags,
+  Partials,
   PermissionsBitField,
 } from 'discord.js';
 
 import { loadConfig } from './config.js';
+import { cacheCommandData } from './discord/cache-command.js';
+import { createCacheInteractionHandler } from './discord/cache-handler.js';
 import { scanCommandData } from './discord/command.js';
 import { createInteractionHandler } from './discord/handler.js';
 import { createScanAdapter } from './discord/scan-adapter.js';
@@ -16,6 +19,8 @@ import { createGuidanceDiscordAdapter } from './guidance/discord-adapter.js';
 import { createInfoHandler } from './guidance/info-handler.js';
 import { registerGuidanceEvents } from './guidance/runtime.js';
 import { createThreadReader } from './guidance/thread-reader.js';
+import { createModrinthClient } from './modrinth/client.js';
+import { createCatalogueService } from './modrinth/service.js';
 
 try {
   process.loadEnvFile('.env');
@@ -24,19 +29,27 @@ try {
 }
 
 const config = loadConfig(process.env);
+const catalogueService = createCatalogueService({ client: createModrinthClient() });
+await catalogueService.start();
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
+  partials: [Partials.Channel, Partials.Message],
 });
 
 const scanAdapter = createScanAdapter(client, config);
-const handleInteraction = createInteractionHandler({
+const handleScanInteraction = createInteractionHandler({
   config,
   adapter: scanAdapter,
   writerFactory: createAtomicJsonlWriter,
+});
+const handleCacheInteraction = createCacheInteractionHandler({
+  config,
+  catalogueService,
 });
 
 const guidanceAdapter = createGuidanceDiscordAdapter(client);
@@ -44,6 +57,7 @@ const threadReader = createThreadReader({ forumChannelIds: config.forumChannelId
 const guidanceCoordinator = createGuidanceCoordinator({
   reader: threadReader,
   adapter: guidanceAdapter,
+  catalogueService,
 });
 const infoHandler = createInfoHandler({
   forumChannelIds: config.forumChannelIds,
@@ -59,29 +73,54 @@ registerGuidanceEvents(client, {
 
 client.once(Events.ClientReady, async (readyClient) => {
   await readyClient.application.commands.set([scanCommandData.toJSON()]);
-  console.log(`Ready as ${readyClient.user.tag}; /scan export registered globally.`);
+  await readyClient.application.commands.set([cacheCommandData.toJSON()], config.allowedGuildId);
+  console.log(
+    `Ready as ${readyClient.user.tag}; /scan export registered globally and /cache registered in guild ${config.allowedGuildId}.`,
+  );
 });
 
 client.on(Events.InteractionCreate, (interaction) => {
-  handleInteraction(interaction).catch(async (error) => {
-    console.error('Unhandled interaction error:', error instanceof Error ? error.message : String(error));
+  Promise.resolve()
+    .then(async () => {
+      if (await handleCacheInteraction(interaction)) return;
+      await handleScanInteraction(interaction);
+    })
+    .catch(async (error) => {
+      console.error('Unhandled interaction error:', error instanceof Error ? error.message : String(error));
 
-    if (!interaction.isRepliable()) return;
-    const content = 'The command failed unexpectedly. Check the local console for details.';
+      if (!interaction.isRepliable()) return;
+      const content = 'The command failed unexpectedly. Check the local console for details.';
 
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({ content }).catch(() => undefined);
-    } else {
-      const payload = interaction.guildId
-        ? { content, flags: MessageFlags.Ephemeral }
-        : { content };
-      await interaction.reply(payload).catch(() => undefined);
-    }
-  });
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content }).catch(() => undefined);
+      } else {
+        const payload = interaction.guildId
+          ? { content, flags: MessageFlags.Ephemeral }
+          : { content };
+        await interaction.reply(payload).catch(() => undefined);
+      }
+    });
 });
 
 client.on(Events.Error, (error) => {
   console.error('Discord client error:', error.message);
 });
 
-await client.login(config.token);
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}; shutting down.`);
+  catalogueService.stop();
+  client.destroy();
+}
+
+process.once('SIGINT', () => void shutdown('SIGINT'));
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
+
+try {
+  await client.login(config.token);
+} catch (error) {
+  catalogueService.stop();
+  throw error;
+}

@@ -1,5 +1,5 @@
 import { detectThreadVersions } from '../version/detect.js';
-import { buildMainWarning, buildReminder } from './messages.js';
+import { buildMainWarning, buildProgressAcknowledgement, buildReminder } from './messages.js';
 import { diagnoseVersions } from './policy.js';
 
 function errorText(error) {
@@ -9,6 +9,7 @@ function errorText(error) {
 export function createGuidanceCoordinator({
   reader,
   adapter,
+  catalogueService = { catalogue: () => [], revision: () => 0 },
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   reminderDelayMs = 45_000,
@@ -25,26 +26,68 @@ export function createGuidanceCoordinator({
     }
   }
 
+  function invalidateTimer(state) {
+    if (state.timer) clearTimer(state.timer);
+    state.timer = null;
+    state.timerGeneration += 1;
+  }
+
   async function removeState(state, { cleanup = true } = {}) {
-    if (state.timer) {
-      clearTimer(state.timer);
-      state.timer = null;
-    }
+    invalidateTimer(state);
     active.delete(state.threadId);
     if (cleanup) {
-      await safeDelete(state.threadId, state.reminderId);
+      await safeDelete(state.threadId, state.responseId);
       await safeDelete(state.threadId, state.warningId);
     }
   }
 
   function schedule(state) {
+    invalidateTimer(state);
+    if (state.reminderCount >= 2) return;
+    const generation = state.timerGeneration;
     state.timer = setTimer(async () => {
-      state.timer = null;
-      await check(state.threadId, { sendReminder: true });
+      const current = active.get(state.threadId);
+      if (!current || current.timerGeneration !== generation) return;
+      current.timer = null;
+      await check(state.threadId, { mode: 'reminder', generation });
     }, reminderDelayMs);
   }
 
-  async function performCheck(state, { sendReminder }) {
+  function diagnose(snapshot) {
+    return diagnoseVersions(
+      detectThreadVersions(snapshot.detectorInput),
+      catalogueService.catalogue(),
+    );
+  }
+
+  async function updateMain(state, snapshot, diagnosis) {
+    const payload = buildMainWarning({
+      ownerId: snapshot.ownerId,
+      diagnosis,
+      starterId: snapshot.starterId,
+    });
+    try {
+      await adapter.editMessage(state.threadId, state.warningId, payload);
+    } catch (error) {
+      logger.error(`Failed to edit guidance message ${state.warningId}: ${errorText(error)}`);
+      await safeDelete(state.threadId, state.warningId);
+      const replacement = await adapter.sendMain(state.thread, snapshot, payload);
+      state.warningId = replacement.id;
+    }
+  }
+
+  async function replaceResponse(state, operation) {
+    if (state.responseId) {
+      await safeDelete(state.threadId, state.responseId);
+      state.responseId = null;
+    }
+    const message = await operation();
+    state.responseId = message.id;
+  }
+
+  async function performCheck(state, { mode, messageId = null, generation = null }) {
+    if (generation !== null && state.timerGeneration !== generation) return;
+
     let snapshot;
     try {
       snapshot = await reader.read(state.thread);
@@ -54,6 +97,7 @@ export function createGuidanceCoordinator({
       return;
     }
 
+    if (generation !== null && state.timerGeneration !== generation) return;
     if (!snapshot || snapshot.archived || snapshot.locked) {
       await removeState(state);
       return;
@@ -61,22 +105,55 @@ export function createGuidanceCoordinator({
 
     state.ownerId = snapshot.ownerId;
     state.starterId = snapshot.starterId;
-    const diagnosis = diagnoseVersions(detectThreadVersions(snapshot.detectorInput));
+    const diagnosis = diagnose(snapshot);
     if (diagnosis.complete) {
       await removeState(state);
       return;
     }
 
-    if (!sendReminder || state.reminderCount >= 2) return;
+    const changed = diagnosis.fingerprint !== state.lastDiagnosisFingerprint;
 
-    if (state.reminderId) {
-      await safeDelete(state.threadId, state.reminderId);
-      state.reminderId = null;
+    if (mode === 'owner' || mode === 'evidence') {
+      if (!changed) return;
+      state.lastDiagnosisFingerprint = diagnosis.fingerprint;
+      state.catalogueRevision = catalogueService.revision();
+      state.invalidAttemptCount += 1;
+      await updateMain(state, snapshot, diagnosis);
+
+      if (mode === 'owner' && messageId) {
+        try {
+          await replaceResponse(state, () => adapter.sendResponse(
+            state.thread,
+            snapshot,
+            buildProgressAcknowledgement({
+              ownerId: snapshot.ownerId,
+              diagnosis,
+              messageId,
+              invalidAttemptCount: state.invalidAttemptCount,
+            }),
+          ));
+        } catch (error) {
+          logger.error(`Failed to acknowledge version progress in thread ${state.threadId}: ${errorText(error)}`);
+        }
+      } else if (state.responseId) {
+        await safeDelete(state.threadId, state.responseId);
+        state.responseId = null;
+      }
+
+      if (state.reminderCount < 2) schedule(state);
+      return;
     }
 
+    if (changed) {
+      state.lastDiagnosisFingerprint = diagnosis.fingerprint;
+      state.catalogueRevision = catalogueService.revision();
+      await updateMain(state, snapshot, diagnosis);
+    }
+
+    if (state.reminderCount >= 2) return;
     const reminderNumber = state.reminderCount + 1;
     try {
-      const message = await adapter.sendReminder(
+      await replaceResponse(state, () => adapter.sendReminder(
         state.thread,
         snapshot,
         buildReminder({
@@ -85,8 +162,7 @@ export function createGuidanceCoordinator({
           starterId: snapshot.starterId,
           reminderNumber,
         }),
-      );
-      state.reminderId = message.id;
+      ));
       state.reminderCount = reminderNumber;
     } catch (error) {
       logger.error(`Failed to send reminder in thread ${state.threadId}: ${errorText(error)}`);
@@ -119,7 +195,7 @@ export function createGuidanceCoordinator({
       }
 
       if (!snapshot || snapshot.archived || snapshot.locked) return false;
-      const diagnosis = diagnoseVersions(detectThreadVersions(snapshot.detectorInput));
+      const diagnosis = diagnose(snapshot);
       if (diagnosis.complete) return false;
 
       let warning;
@@ -140,9 +216,13 @@ export function createGuidanceCoordinator({
         ownerId: snapshot.ownerId,
         starterId: snapshot.starterId,
         warningId: warning.id,
-        reminderId: null,
+        responseId: null,
         reminderCount: 0,
+        invalidAttemptCount: 0,
+        lastDiagnosisFingerprint: diagnosis.fingerprint,
+        catalogueRevision: catalogueService.revision(),
         timer: null,
+        timerGeneration: 0,
         checking: null,
       };
       active.set(thread.id, state);
@@ -153,7 +233,14 @@ export function createGuidanceCoordinator({
     async onOwnerMessage(message) {
       const state = active.get(message.channelId);
       if (!state || message.author?.id !== state.ownerId) return;
-      await check(state.threadId, { sendReminder: false });
+      await check(state.threadId, { mode: 'owner', messageId: message.id });
+    },
+
+    async onOwnerEvidenceChanged(message) {
+      const state = active.get(message.channelId);
+      if (!state) return;
+      if (message.author?.id && message.author.id !== state.ownerId) return;
+      await check(state.threadId, { mode: 'evidence' });
     },
 
     async onThreadUpdate(_oldThread, newThread) {
@@ -164,7 +251,7 @@ export function createGuidanceCoordinator({
         await removeState(state);
         return;
       }
-      await check(state.threadId, { sendReminder: false });
+      await check(state.threadId, { mode: 'evidence' });
     },
 
     async onThreadDelete(thread) {
