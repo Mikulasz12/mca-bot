@@ -24,7 +24,9 @@ async function fetchStarterWithRetry(thread, sleep) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await thread.fetchStarterMessage();
+      const starter = await thread.fetchStarterMessage();
+      if (!starter) throw new Error('Starter message is not available yet');
+      return starter;
     } catch (error) {
       lastError = error;
       if (attempt < STARTER_RETRY_DELAYS.length) await sleep(STARTER_RETRY_DELAYS[attempt]);
