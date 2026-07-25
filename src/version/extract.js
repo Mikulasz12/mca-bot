@@ -4,6 +4,7 @@ const BARE_VERSION = new RegExp(`^\\s*(${VERSION_CORE})\\s*$`, 'i');
 const INFORMAL_PAIR = new RegExp(`(?<![\\d.])(?<mca>${VERSION_CORE})\\s*(?:\\+|/)\\s*(?<minecraft>\\d+(?:\\.\\d+){1,3})(?![\\d.])`, 'gi');
 const MCA_FILE = new RegExp(`\\bmca-(?<loader>fabric|forge|neoforge|quilt)-(?<mca>${VERSION_CORE})(?:\\+(?<minecraft>\\d+(?:\\.\\d+){1,3}))?(?:\\.jar)?`, 'gi');
 const LOADER = /\b(neo\s*forge|neoforge|fabric|quilt|forge)\b/gi;
+const FORUM_MINECRAFT_TAG = new RegExp(`^\\s*MCA\\s+(${VERSION_CORE})\\s*$`, 'i');
 
 export function normaliseVersion(value) {
   const match = String(value ?? '').trim().match(/^(\d+(?:\.\d+){1,3})(?:\s*[-._ ]?\s*(alpha|beta|rc|pre(?:release)?)[-._ ]*(\d+))?$/i);
@@ -68,6 +69,7 @@ export function extractVersionEvidence({
   owner = false,
   priority = 0,
   inferTitle = false,
+  forumTag = false,
 } = {}) {
   const value = String(text ?? '');
   const minecraft = [];
@@ -80,6 +82,23 @@ export function extractVersionEvidence({
   for (const match of value.matchAll(LOADER)) {
     const loader = normaliseLoader(match[1]);
     if (loader) loaders.push(loader);
+  }
+
+  if (forumTag) {
+    const tagMatch = value.match(FORUM_MINECRAFT_TAG);
+    const version = tagMatch ? normaliseVersion(tagMatch[1]) : null;
+    if (version && isMinecraftShape(version)) minecraft.push(version);
+    return {
+      source,
+      owner,
+      priority,
+      minecraft: unique(minecraft),
+      mca: [],
+      rejectedMca: [],
+      pairs: [],
+      loaders: unique(loaders),
+      vague: [],
+    };
   }
 
   for (const match of value.matchAll(MCA_FILE)) {
@@ -145,6 +164,10 @@ export function extractVersionEvidence({
   }
 
   if (inferTitle) {
+    const bareTitle = value.match(BARE_VERSION);
+    const bareTitleVersion = bareTitle ? normaliseVersion(bareTitle[1]) : null;
+    if (bareTitleVersion && isMcaShape(bareTitleVersion)) mca.push(bareTitleVersion);
+
     for (const token of tokens(value)) {
       if (isMinecraftShape(token.value)) minecraft.push(token.value);
       if (/\bmca\b/i.test(value) && isMcaShape(token.value)) mca.push(token.value);

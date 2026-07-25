@@ -81,7 +81,7 @@ export function detectThreadVersions({ tags = [], title = '', messages = [] } = 
     const match = String(tag.name ?? '').match(/^\s*MCA\s+(\d+(?:\.\d+){1,3})\s*$/i);
     if (match && isMinecraftShape(match[1])) add(minecraft, match[1], 'tag', tag.name);
   }
-  scanText(title, 'title', minecraft, mca);
+  scanText(title, 'title', minecraft, mca, { allowBare: true });
   for (const token of tokens(title)) {
     if (isMinecraftShape(token.value)) add(minecraft, token.value, 'title', token.match);
     if (/(?<![a-z])mca/i.test(title) && isMcaShape(token.value)) add(mca, token.value, 'title', token.match);
@@ -98,7 +98,7 @@ export function detectThreadVersions({ tags = [], title = '', messages = [] } = 
   for (const tag of tags) {
     tagEvidence = mergeSourceEvidence(
       tagEvidence,
-      extractVersionEvidence({ text: tag.name, source: 'tags', priority: 0 }),
+      extractVersionEvidence({ text: tag.name, source: 'tags', priority: 0, forumTag: true }),
     );
   }
   sources.push(tagEvidence);
