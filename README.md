@@ -91,7 +91,11 @@ When a reply adds meaningful information, the bot updates its main warning immed
 
 The bot keeps at most one main guidance embed and one acknowledgement/reminder message. It sends at most two scheduled reminder pings and deletes the previous secondary message before replacing it.
 
-Only the title, forum tags, starter post, and later messages or attachment filenames from the thread owner count as evidence. Staff examples and other bot messages cannot accidentally satisfy the check.
+Only the title, forum tags, starter post, and later messages or attachment filenames from the thread owner count as evidence. Staff examples and other bot messages cannot accidentally satisfy the check. A forum tag named `MCA <version>` is authoritative for the Minecraft version and overrides conflicting text until the tag changes.
+
+Threads tagged `Server Help`, `Non-MCA Help`, or `Translation Help` are excluded from version guidance and the `info` response. The exclusion is checked before the bot fetches the starter message or thread history.
+
+If a tracked thread is deleted, the bot silently cancels its reminders and stops tracking it. Shutdown also cancels all reminder timers before the Discord client is destroyed.
 
 ## Version validation
 
