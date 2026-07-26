@@ -1,5 +1,7 @@
-import { catalogueStats, normaliseModrinthVersions } from './catalogue.js';
-import { CACHE_FRESH_MS, CACHE_SCHEMA_VERSION, MCA_PROJECT_ID, createDefaultCacheStore, isCacheFresh } from './cache.js';
+import { Buffer } from 'node:buffer';
+
+import { catalogueStats, createModrinthIndex, normaliseModrinthVersions } from './catalogue.js';
+import { CACHE_FRESH_MS, CACHE_SCHEMA_VERSION, createDefaultCacheStore, isCacheFresh } from './cache.js';
 
 export const DEFAULT_CACHE_PATH = 'data/modrinth-mca-versions.json';
 export const REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -21,7 +23,8 @@ export function createCatalogueService({
 } = {}) {
   if (!client?.fetchVersions) throw new TypeError('A Modrinth client is required');
 
-  let entries = [];
+  let records = [];
+  let index = createModrinthIndex([]);
   let fetchedAt = null;
   let source = 'unavailable';
   let currentRevision = 0;
@@ -36,17 +39,15 @@ export function createCatalogueService({
   function document() {
     return fetchedAt ? {
       schemaVersion: CACHE_SCHEMA_VERSION,
-      projectId: MCA_PROJECT_ID,
       fetchedAt,
-      versions: entries,
+      versions: records,
     } : null;
   }
 
   function status() {
-    const stats = catalogueStats(entries);
     const cacheDocument = document();
     return Object.freeze({
-      available: entries.length > 0,
+      available: index.entries.length > 0,
       source,
       fetchedAt,
       stale: cacheDocument ? !isCacheFresh(cacheDocument, now(), freshnessMs) : true,
@@ -56,8 +57,17 @@ export function createCatalogueService({
       blockedUntil,
       disabledReason,
       lastError,
-      ...stats,
+      cacheBytes: cacheDocument ? Buffer.byteLength(JSON.stringify(cacheDocument)) : 0,
+      ...catalogueStats(index),
     });
+  }
+
+  function publish(nextRecords, refreshedAt, nextSource) {
+    records = Object.freeze([...nextRecords]);
+    index = createModrinthIndex(records);
+    fetchedAt = refreshedAt;
+    source = nextSource;
+    currentRevision += 1;
   }
 
   function refresh({ reason = 'automatic' } = {}) {
@@ -72,23 +82,19 @@ export function createCatalogueService({
       try {
         const raw = await client.fetchVersions();
         const normalised = normaliseModrinthVersions(raw);
-        if (normalised.length === 0) throw new Error('Modrinth returned no usable version records');
+        if (normalised.length === 0) throw new Error('Modrinth returned no usable listed MCA version records');
         const refreshedAt = new Date(now()).toISOString();
         const nextDocument = {
           schemaVersion: CACHE_SCHEMA_VERSION,
-          projectId: MCA_PROJECT_ID,
           fetchedAt: refreshedAt,
           versions: normalised,
         };
         await cacheStore.write(nextDocument);
-        entries = normalised;
-        fetchedAt = refreshedAt;
-        source = 'network';
-        currentRevision += 1;
+        publish(normalised, refreshedAt, 'network');
         blockedUntil = null;
         lastError = null;
         nextRefreshAt = new Date(now() + refreshIntervalMs).toISOString();
-        logger.info?.(`Refreshed ${normalised.length} Modrinth MCA version records (${reason}).`);
+        logger.info?.(`Refreshed and indexed ${normalised.length} listed Modrinth MCA releases (${reason}).`);
         return { ok: true, reason, revision: currentRevision, status: status() };
       } catch (error) {
         lastError = errorText(error);
@@ -108,12 +114,7 @@ export function createCatalogueService({
       if (started) return status();
       started = true;
       const cached = await cacheStore.load();
-      if (cached) {
-        entries = Object.freeze([...(cached.versions ?? [])]);
-        fetchedAt = cached.fetchedAt;
-        source = 'disk';
-        currentRevision += 1;
-      }
+      if (cached) publish(cached.versions, cached.fetchedAt, 'disk');
 
       nextRefreshAt = new Date(now() + refreshIntervalMs).toISOString();
       intervalHandle = setIntervalFn(() => {
@@ -133,7 +134,7 @@ export function createCatalogueService({
     },
 
     refresh,
-    catalogue: () => entries,
+    catalogue: () => index,
     revision: () => currentRevision,
     status,
   };
