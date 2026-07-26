@@ -1,24 +1,30 @@
 import { dirname } from 'node:path';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 
-export const CACHE_SCHEMA_VERSION = 1;
-export const MCA_PROJECT_ID = '1W98a849';
+export const CACHE_SCHEMA_VERSION = 2;
 export const CACHE_FRESH_MS = 6 * 60 * 60 * 1000;
+
+function validTuple(tuple) {
+  return Array.isArray(tuple) && tuple.length === 6 &&
+    typeof tuple[0] === 'string' &&
+    Array.isArray(tuple[1]) && tuple[1].every((value) => typeof value === 'string') &&
+    Array.isArray(tuple[2]) && tuple[2].every((value) => typeof value === 'string') &&
+    ['r', 'b', 'a'].includes(tuple[3]) &&
+    Number.isInteger(tuple[4]) &&
+    typeof tuple[5] === 'string';
+}
 
 function validDocument(document) {
   return document && document.schemaVersion === CACHE_SCHEMA_VERSION &&
-    document.projectId === MCA_PROJECT_ID &&
     typeof document.fetchedAt === 'string' && Number.isFinite(Date.parse(document.fetchedAt)) &&
-    Array.isArray(document.versions);
+    Array.isArray(document.versions) && document.versions.every(validTuple);
 }
 
 export async function loadCatalogueCache(path, { readFile: read = readFile } = {}) {
   try {
-    const raw = await read(path, 'utf8');
-    const document = JSON.parse(String(raw));
+    const document = JSON.parse(String(await read(path, 'utf8')));
     return validDocument(document) ? document : null;
-  } catch (error) {
-    if (error?.code === 'ENOENT' || error instanceof SyntaxError || error instanceof TypeError) return null;
+  } catch {
     return null;
   }
 }
@@ -34,7 +40,7 @@ export async function writeCatalogueCache(path, document, {
   await makeDirectory(dirname(path), { recursive: true });
   const temporaryPath = `${path}.${random()}.tmp`;
   try {
-    await write(temporaryPath, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+    await write(temporaryPath, `${JSON.stringify(document)}\n`, 'utf8');
     await move(temporaryPath, path);
   } catch (error) {
     await remove(temporaryPath, { force: true }).catch(() => undefined);
