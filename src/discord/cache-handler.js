@@ -28,9 +28,12 @@ function unavailableMinecraftStatus() {
   return {
     available: false, source: 'unavailable', fetchedAt: null, stale: true,
     refreshing: false, revision: 0, nextRefreshAt: null, lastError: null,
-    versionCount: 0, releaseCount: 0, snapshotCount: 0,
-    oldBetaCount: 0, oldAlphaCount: 0, latestRelease: null, latestSnapshot: null,
+    versionCount: 0, releaseCount: 0, latestRelease: null, cacheBytes: 0,
   };
+}
+
+function formatSize(bytes) {
+  return `${((bytes ?? 0) / 1024).toFixed(1)} KiB`;
 }
 
 function sourceState(status) {
@@ -46,22 +49,20 @@ function formatStatus(modrinth, minecraft, { now, headline = 'Version cache stat
       name: 'Modrinth MCA catalogue',
       value: [
         `Modrinth version records indexed: **${modrinth.recordCount ?? 0}**`,
-        `Listed public records: **${modrinth.listedRecordCount ?? 0}**`,
         `Unique MCA versions: **${modrinth.uniqueMcaVersionCount ?? 0}**`,
         `MCA-supported Minecraft versions: **${modrinth.minecraftVersionCount ?? 0}**`,
         `Loaders (${modrinth.loaderCount ?? 0}): **${loaders}**`,
+        `Compact cache size: **${formatSize(modrinth.cacheBytes)}**`,
         sourceState(modrinth),
         `Last update: **${modrinth.fetchedAt ?? 'never'}** (${formatAge(modrinth.fetchedAt, now)} ago)`,
       ].join('\n'),
     },
     {
-      name: 'Official Mojang Java versions',
+      name: 'Official Mojang Java releases',
       value: [
-        `Mojang Minecraft versions indexed: **${minecraft.versionCount ?? 0}**`,
-        `Releases: **${minecraft.releaseCount ?? 0}** · Snapshots/testing: **${minecraft.snapshotCount ?? 0}**`,
-        `Old beta: **${minecraft.oldBetaCount ?? 0}** · Old alpha: **${minecraft.oldAlphaCount ?? 0}**`,
+        `Mojang release IDs indexed: **${minecraft.releaseCount ?? 0}**`,
         `Latest release: **${minecraft.latestRelease ?? 'unknown'}**`,
-        `Latest snapshot/testing version: **${minecraft.latestSnapshot ?? 'unknown'}**`,
+        `Compact cache size: **${formatSize(minecraft.cacheBytes)}**`,
         sourceState(minecraft),
         `Last update: **${minecraft.fetchedAt ?? 'never'}** (${formatAge(minecraft.fetchedAt, now)} ago)`,
       ].join('\n'),
