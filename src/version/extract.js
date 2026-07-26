@@ -171,7 +171,8 @@ export function extractVersionEvidence({
 
     for (const token of tokens(value)) {
       if (isMinecraftShape(token.value)) minecraft.push(token.value);
-      if (/\bmca\b/i.test(value) && isMcaShape(token.value)) mca.push(token.value);
+      // Support forum titles commonly start with the MCA version followed by a short issue summary.
+      if (isMcaShape(token.value)) mca.push(token.value);
     }
   }
 
