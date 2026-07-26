@@ -1,27 +1,25 @@
-import { extractVersionEvidence, mergeSourceEvidence } from './extract.js';
+import {
+  extractVersionEvidence,
+  isMcaShape,
+  isMinecraftShape,
+  mergeSourceEvidence,
+  normaliseVersion,
+} from './extract.js';
 import { resolveVersionEvidence } from './resolve.js';
 
 const VERSION_TOKEN = /(?<!\d)(\d+(?:\.\d+){1,3})(?:\s*[-._ ]?\s*(alpha|beta|rc|pre(?:release)?)[-._ ]*(\d+))?(?!\d)/gi;
 const BARE_VERSION = /^\s*(\d+(?:\.\d+){1,3})(?:\s*[-._ ]?\s*(alpha|beta|rc|pre(?:release)?)[-._ ]*(\d+))?\s*$/i;
 const MCA_FILE = /\bmca-(?:fabric|forge|neoforge|quilt)-(?<mca>\d+(?:\.\d+){1,3}(?:[-._ ]?(?:alpha|beta|rc|pre(?:release)?)[-._ ]?\d+)?)(?:\+(?<minecraft>\d+(?:\.\d+){1,3}))?/gi;
 
-function normalizeVersion(base, prerelease, prereleaseNumber) {
-  if (!prerelease) return base;
-  const kind = prerelease.toLowerCase().replace('release', '');
-  return `${base}-${kind}.${prereleaseNumber}`;
-}
-
 function tokens(text) {
   const found = [];
   for (const match of String(text ?? '').matchAll(VERSION_TOKEN)) {
-    found.push({ value: normalizeVersion(match[1], match[2], match[3]), match: match[0], index: match.index ?? 0 });
+    const value = normaliseVersion(match[0]);
+    if (value) found.push({ value, match: match[0], index: match.index ?? 0 });
   }
   return found;
 }
 
-function majorOf(version) { return Number.parseInt(version.split('.')[0], 10); }
-function isMinecraftShape(version) { const major = majorOf(version); return major === 1 || (major >= 26 && major <= 39); }
-function isMcaShape(version) { const major = majorOf(version); return major >= 5 && major <= 19; }
 function makeField() { return { status: 'missing', values: [], evidence: [], rejected: [] }; }
 function add(field, value, source, match, confidence = 'high') {
   if (!field.values.includes(value)) field.values.push(value);
@@ -67,7 +65,7 @@ function scanText(text, source, minecraft, mca, { allowBare = false } = {}) {
   if (allowBare) {
     const match = value.match(BARE_VERSION);
     if (match) {
-      const normalized = normalizeVersion(match[1], match[2], match[3]);
+      const normalized = normaliseVersion(match[0]);
       if (isMinecraftShape(normalized)) add(minecraft, normalized, source, match[0], 'medium');
       if (isMcaShape(normalized)) add(mca, normalized, source, match[0], 'medium');
     }
@@ -78,8 +76,8 @@ export function detectThreadVersions({ tags = [], title = '', messages = [] } = 
   const mca = makeField();
   const vague = new Set();
   for (const tag of tags) {
-    const match = String(tag.name ?? '').match(/^\s*MCA\s+(\d+(?:\.\d+){1,3})\s*$/i);
-    if (match && isMinecraftShape(match[1])) add(minecraft, match[1], 'tag', tag.name);
+    const tagEvidence = extractVersionEvidence({ text: tag.name, source: 'tag', forumTag: true });
+    for (const version of tagEvidence.minecraft) add(minecraft, version, 'tag', tag.name);
   }
   scanText(title, 'title', minecraft, mca, { allowBare: true });
   for (const token of tokens(title)) {
