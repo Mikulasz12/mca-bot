@@ -1,3 +1,5 @@
+import { isMissingDiscordResource } from './discord-errors.js';
+
 function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -6,7 +8,9 @@ export function registerGuidanceEvents(client, { coordinator, infoHandler, adapt
   function run(label, operation) {
     Promise.resolve()
       .then(operation)
-      .catch((error) => logger.error(`${label}: ${errorText(error)}`));
+      .catch((error) => {
+        if (!isMissingDiscordResource(error)) logger.error(`${label}: ${errorText(error)}`);
+      });
   }
 
   client.on(Events.ThreadCreate, (thread, newlyCreated) => {
