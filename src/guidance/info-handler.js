@@ -1,4 +1,5 @@
 import { buildInfoReply } from './messages.js';
+import { hasExcludedGuidanceTag } from './thread-policy.js';
 
 export function createInfoHandler({
   forumChannelIds,
@@ -15,6 +16,7 @@ export function createInfoHandler({
       if (String(message.content ?? '').trim().toLowerCase() !== 'info') return false;
       if (!message.channel?.isThread?.()) return false;
       if (!configuredForums.has(String(message.channel.parentId))) return false;
+      if (hasExcludedGuidanceTag(message.channel)) return false;
 
       const bypass = Boolean(canManageMessages(message));
       const key = `${message.channelId}:${message.author.id}`;
