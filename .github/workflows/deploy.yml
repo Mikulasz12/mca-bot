@@ -77,7 +77,12 @@ jobs:
           RELEASE_DIR="$VPS_APP_DIR/releases/$GITHUB_SHA"
           SSH_ARGS="-p $PORT -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o IdentitiesOnly=yes"
 
-          ssh $SSH_ARGS "$VPS_USER@$VPS_HOST" "mkdir -p '$RELEASE_DIR'"
+          ssh $SSH_ARGS "$VPS_USER@$VPS_HOST" "
+            set -euo pipefail
+            sudo mkdir -p '$VPS_APP_DIR/releases' '$VPS_APP_DIR/shared/data' '$VPS_APP_DIR/shared/exports' '$VPS_APP_DIR/shared/env'
+            sudo chown -R '$VPS_USER:$VPS_USER' '$VPS_APP_DIR'
+            mkdir -p '$RELEASE_DIR'
+          "
           rsync -az --delete \
             --exclude .git/ \
             --exclude .github/ \
