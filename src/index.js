@@ -120,6 +120,7 @@ async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`Received ${signal}; shutting down.`);
+  guidanceCoordinator.shutdown();
   catalogueService.stop();
   minecraftService.stop();
   client.destroy();
@@ -131,6 +132,7 @@ process.once('SIGTERM', () => void shutdown('SIGTERM'));
 try {
   await client.login(config.token);
 } catch (error) {
+  guidanceCoordinator.shutdown();
   catalogueService.stop();
   minecraftService.stop();
   throw error;
