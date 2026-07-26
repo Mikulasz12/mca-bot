@@ -1,16 +1,14 @@
 import { dirname } from 'node:path';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 
-export const MINECRAFT_CACHE_SCHEMA_VERSION = 1;
-export const MINECRAFT_CACHE_SOURCE = 'mojang-version-manifest-v2';
+export const MINECRAFT_CACHE_SCHEMA_VERSION = 2;
 export const MINECRAFT_CACHE_FRESH_MS = 6 * 60 * 60 * 1000;
 
 function validDocument(document) {
   return document && document.schemaVersion === MINECRAFT_CACHE_SCHEMA_VERSION &&
-    document.source === MINECRAFT_CACHE_SOURCE &&
     typeof document.fetchedAt === 'string' && Number.isFinite(Date.parse(document.fetchedAt)) &&
-    document.latest && typeof document.latest === 'object' &&
-    Array.isArray(document.versions);
+    (document.latestRelease === null || typeof document.latestRelease === 'string') &&
+    Array.isArray(document.versions) && document.versions.every((version) => typeof version === 'string');
 }
 
 export async function loadMinecraftVersionCache(path, { readFile: read = readFile } = {}) {
@@ -33,7 +31,7 @@ export async function writeMinecraftVersionCache(path, document, {
   await makeDirectory(dirname(path), { recursive: true });
   const temporaryPath = `${path}.${random()}.tmp`;
   try {
-    await write(temporaryPath, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+    await write(temporaryPath, `${JSON.stringify(document)}\n`, 'utf8');
     await move(temporaryPath, path);
   } catch (error) {
     await remove(temporaryPath, { force: true }).catch(() => undefined);
