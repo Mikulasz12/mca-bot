@@ -1,5 +1,17 @@
-import { createMinecraftCacheStore, isMinecraftCacheFresh, MINECRAFT_CACHE_FRESH_MS, MINECRAFT_CACHE_SCHEMA_VERSION, MINECRAFT_CACHE_SOURCE } from './cache.js';
-import { hasMinecraftVersion, minecraftManifestStats, normaliseMinecraftManifest } from './catalogue.js';
+import { Buffer } from 'node:buffer';
+
+import {
+  createMinecraftCacheStore,
+  isMinecraftCacheFresh,
+  MINECRAFT_CACHE_FRESH_MS,
+  MINECRAFT_CACHE_SCHEMA_VERSION,
+} from './cache.js';
+import {
+  canonicalMinecraftVersionId,
+  createMinecraftVersionIndex,
+  minecraftManifestStats,
+  normaliseMinecraftManifest,
+} from './catalogue.js';
 
 export const DEFAULT_MINECRAFT_CACHE_PATH = 'data/mojang-minecraft-versions.json';
 export const MINECRAFT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -22,7 +34,8 @@ export function createMinecraftVersionService({
   if (!client?.fetchManifest) throw new TypeError('A Mojang Minecraft manifest client is required');
 
   let versions = [];
-  let latest = { release: null, snapshot: null };
+  let versionIndex = new Set();
+  let latestRelease = null;
   let fetchedAt = null;
   let source = 'unavailable';
   let currentRevision = 0;
@@ -35,9 +48,8 @@ export function createMinecraftVersionService({
   function document() {
     return fetchedAt ? {
       schemaVersion: MINECRAFT_CACHE_SCHEMA_VERSION,
-      source: MINECRAFT_CACHE_SOURCE,
       fetchedAt,
-      latest,
+      latestRelease,
       versions,
     } : null;
   }
@@ -45,7 +57,7 @@ export function createMinecraftVersionService({
   function status() {
     const cacheDocument = document();
     return Object.freeze({
-      available: versions.length > 0,
+      available: versionIndex.size > 0,
       source,
       fetchedAt,
       stale: cacheDocument ? !isMinecraftCacheFresh(cacheDocument, now(), freshnessMs) : true,
@@ -53,8 +65,18 @@ export function createMinecraftVersionService({
       revision: currentRevision,
       nextRefreshAt,
       lastError,
-      ...minecraftManifestStats(versions, latest),
+      cacheBytes: cacheDocument ? Buffer.byteLength(JSON.stringify(cacheDocument)) : 0,
+      ...minecraftManifestStats(versionIndex, latestRelease),
     });
+  }
+
+  function publish(nextVersions, nextLatestRelease, refreshedAt, nextSource) {
+    versions = Object.freeze([...nextVersions]);
+    versionIndex = createMinecraftVersionIndex(versions);
+    latestRelease = nextLatestRelease;
+    fetchedAt = refreshedAt;
+    source = nextSource;
+    currentRevision += 1;
   }
 
   function refresh({ reason = 'automatic' } = {}) {
@@ -63,31 +85,24 @@ export function createMinecraftVersionService({
       try {
         const manifest = await client.fetchManifest();
         const normalised = normaliseMinecraftManifest(manifest);
-        if (normalised.length === 0) throw new Error('Mojang returned no usable Minecraft version records');
+        if (normalised.length === 0) throw new Error('Mojang returned no usable Minecraft release records');
         const refreshedAt = new Date(now()).toISOString();
+        const nextLatestRelease = canonicalMinecraftVersionId(manifest.latest?.release);
         const nextDocument = {
           schemaVersion: MINECRAFT_CACHE_SCHEMA_VERSION,
-          source: MINECRAFT_CACHE_SOURCE,
           fetchedAt: refreshedAt,
-          latest: {
-            release: manifest.latest?.release ?? null,
-            snapshot: manifest.latest?.snapshot ?? null,
-          },
+          latestRelease: nextLatestRelease,
           versions: normalised,
         };
         await cacheStore.write(nextDocument);
-        versions = normalised;
-        latest = nextDocument.latest;
-        fetchedAt = refreshedAt;
-        source = 'network';
-        currentRevision += 1;
+        publish(normalised, nextLatestRelease, refreshedAt, 'network');
         lastError = null;
         nextRefreshAt = new Date(now() + refreshIntervalMs).toISOString();
-        logger.info?.(`Refreshed ${normalised.length} Mojang Minecraft version records (${reason}).`);
+        logger.info?.(`Refreshed ${normalised.length} Mojang Minecraft release IDs (${reason}).`);
         return { ok: true, reason, revision: currentRevision, status: status() };
       } catch (error) {
         lastError = errorText(error);
-        logger.error?.(`Failed to refresh Mojang Minecraft version manifest: ${lastError}`);
+        logger.error?.(`Failed to refresh Mojang Minecraft release index: ${lastError}`);
         return { ok: false, reason, error: lastError, status: status() };
       } finally {
         refreshPromise = null;
@@ -101,13 +116,7 @@ export function createMinecraftVersionService({
       if (started) return status();
       started = true;
       const cached = await cacheStore.load();
-      if (cached) {
-        versions = Object.freeze([...(cached.versions ?? [])]);
-        latest = Object.freeze({ ...(cached.latest ?? {}) });
-        fetchedAt = cached.fetchedAt;
-        source = 'disk';
-        currentRevision += 1;
-      }
+      if (cached) publish(cached.versions, cached.latestRelease, cached.fetchedAt, 'disk');
       nextRefreshAt = new Date(now() + refreshIntervalMs).toISOString();
       intervalHandle = setIntervalFn(() => {
         nextRefreshAt = new Date(now() + refreshIntervalMs).toISOString();
@@ -127,8 +136,8 @@ export function createMinecraftVersionService({
     },
 
     refresh,
-    catalogue: () => versions,
-    hasVersion: (candidate) => hasMinecraftVersion(versions, candidate),
+    catalogue: () => versionIndex,
+    hasVersion: (candidate) => versionIndex.has(canonicalMinecraftVersionId(candidate)),
     revision: () => currentRevision,
     status,
   };
