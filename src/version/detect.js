@@ -82,7 +82,7 @@ export function detectThreadVersions({ tags = [], title = '', messages = [] } = 
   scanText(title, 'title', minecraft, mca, { allowBare: true });
   for (const token of tokens(title)) {
     if (isMinecraftShape(token.value)) add(minecraft, token.value, 'title', token.match);
-    if (/(?<![a-z])mca/i.test(title) && isMcaShape(token.value)) add(mca, token.value, 'title', token.match);
+    if (isMcaShape(token.value)) add(mca, token.value, 'title', token.match);
   }
   for (const message of messages) {
     const source = message.position ?? 'message';
