@@ -153,3 +153,144 @@ test('completion after a reminder deletes both reminder and main warning', async
   ]);
   assert.equal(h.coordinator.isTracking('thread-1'), false);
 });
+
+test('deleted thread during startup is ignored without logging', async () => {
+  const logs = [];
+  const error = Object.assign(new Error('Unknown Message'), { code: 10008 });
+  const coordinator = createGuidanceCoordinator({
+    reader: { async read() { throw error; } },
+    adapter: {},
+    logger: { error(message) { logs.push(message); } },
+  });
+
+  assert.equal(await coordinator.start({ id: 'thread-1' }), false);
+  assert.deepEqual(logs, []);
+  assert.equal(coordinator.isTracking('thread-1'), false);
+});
+
+test('deleted thread during a recheck stops tracking without cleanup or logging', async () => {
+  const logs = [];
+  const deleted = [];
+  let reads = 0;
+  const error = Object.assign(new Error('Unknown Channel'), { code: 10003 });
+  const coordinator = createGuidanceCoordinator({
+    reader: {
+      async read() {
+        reads += 1;
+        if (reads === 1) return snapshot({ minecraft: '1.21.1' });
+        throw error;
+      },
+    },
+    adapter: {
+      async sendMain() { return { id: 'main-1' }; },
+      async deleteMessage(threadId, messageId) { deleted.push({ threadId, messageId }); },
+    },
+    setTimer: () => ({ cancelled: false }),
+    clearTimer: (timer) => { timer.cancelled = true; },
+    logger: { error(message) { logs.push(message); } },
+  });
+
+  await coordinator.start({ id: 'thread-1' });
+  await coordinator.onOwnerMessage({ id: 'reply', channelId: 'thread-1', author: { id: 'owner' } });
+
+  assert.equal(coordinator.isTracking('thread-1'), false);
+  assert.deepEqual(deleted, []);
+  assert.deepEqual(logs, []);
+});
+
+test('unexpected read failures still log and clean up tracked guidance', async () => {
+  const logs = [];
+  const deleted = [];
+  let reads = 0;
+  const coordinator = createGuidanceCoordinator({
+    reader: {
+      async read() {
+        reads += 1;
+        if (reads === 1) return snapshot({ minecraft: '1.21.1' });
+        throw new Error('network failed');
+      },
+    },
+    adapter: {
+      async sendMain() { return { id: 'main-1' }; },
+      async deleteMessage(threadId, messageId) { deleted.push({ threadId, messageId }); },
+    },
+    setTimer: () => ({ cancelled: false }),
+    clearTimer: (timer) => { timer.cancelled = true; },
+    logger: { error(message) { logs.push(message); } },
+  });
+
+  await coordinator.start({ id: 'thread-1' });
+  await coordinator.onOwnerMessage({ id: 'reply', channelId: 'thread-1', author: { id: 'owner' } });
+
+  assert.match(logs[0], /network failed/);
+  assert.deepEqual(deleted, [{ threadId: 'thread-1', messageId: 'main-1' }]);
+});
+
+test('shutdown cancels all reminder timers without Discord cleanup', async () => {
+  const h = harness([snapshot({ minecraft: '1.21.1' })]);
+  await h.coordinator.start({ id: 'thread-1' });
+  const timer = h.timers[0];
+
+  h.coordinator.shutdown();
+  await fire(timer);
+
+  assert.equal(timer.cancelled, true);
+  assert.equal(h.coordinator.isTracking('thread-1'), false);
+  assert.equal(h.reads.length, 1);
+  assert.deepEqual(h.deleted, []);
+  assert.equal(h.sentReminders.length, 0);
+});
+
+test('shutdown during startup prevents a late warning from being sent', async () => {
+  let releaseRead;
+  const readPromise = new Promise((resolve) => { releaseRead = resolve; });
+  let sent = 0;
+  const coordinator = createGuidanceCoordinator({
+    reader: { async read() { return readPromise; } },
+    adapter: { async sendMain() { sent += 1; return { id: 'main-1' }; } },
+    logger: { error() {} },
+  });
+
+  const starting = coordinator.start({ id: 'thread-1' });
+  coordinator.shutdown();
+  releaseRead(snapshot({ minecraft: '1.21.1' }));
+
+  assert.equal(await starting, false);
+  assert.equal(sent, 0);
+  assert.equal(coordinator.isTracking('thread-1'), false);
+});
+
+test('shutdown during an in-flight recheck prevents late Discord operations', async () => {
+  let releaseRead;
+  let reads = 0;
+  const timers = [];
+  const operations = [];
+  const coordinator = createGuidanceCoordinator({
+    reader: {
+      async read() {
+        reads += 1;
+        if (reads === 1) return snapshot({ minecraft: '1.21.1' });
+        return new Promise((resolve) => { releaseRead = resolve; });
+      },
+    },
+    adapter: {
+      async sendMain() { operations.push('main'); return { id: 'main-1' }; },
+      async editMessage() { operations.push('edit'); },
+      async sendReminder() { operations.push('reminder'); return { id: 'reminder-1' }; },
+      async deleteMessage() { operations.push('delete'); },
+    },
+    setTimer(fn) { const timer = { fn, cancelled: false }; timers.push(timer); return timer; },
+    clearTimer(timer) { timer.cancelled = true; },
+    logger: { error() {} },
+  });
+
+  await coordinator.start({ id: 'thread-1' });
+  const rechecking = timers[0].fn();
+  await new Promise((resolve) => setImmediate(resolve));
+  coordinator.shutdown();
+  releaseRead(snapshot({ minecraft: '1.21.1' }));
+  await rechecking;
+
+  assert.deepEqual(operations, ['main']);
+  assert.equal(coordinator.isTracking('thread-1'), false);
+});
