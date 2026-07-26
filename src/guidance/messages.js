@@ -109,6 +109,23 @@ export function buildProgressAcknowledgement({ ownerId, diagnosis, messageId, in
   };
 }
 
+export function buildUpdateAdvisory({ ownerId, diagnosis, messageId }) {
+  const update = diagnosis.updateAvailable;
+  if (!update?.entry) throw new TypeError('An update recommendation is required');
+  const loaders = update.loaders?.length ? ` for ${update.loaders.join(', ')}` : '';
+  return {
+    content: `<@${ownerId}>`,
+    allowedMentions: ownerMentions(ownerId),
+    reply: replyTo(messageId),
+    embeds: [{
+      color: INFO_COLOR,
+      title: 'MCA Reborn update available',
+      description: `Your MCA Reborn version \`${diagnosis.mcaVersion}\` is valid, but **${update.entry.mcaVersion}** is the newest compatible public release for Minecraft \`${diagnosis.minecraftVersion}\`${loaders}. Updating is optional, but it may include fixes already made after your installed version.`,
+      fields: [{ name: 'Download', value: update.entry.url }],
+    }],
+  };
+}
+
 export function buildReminder({ ownerId, diagnosis, starterId, reminderNumber }) {
   const needed = diagnosis.missing.length > 0 ? diagnosis.missing.join(' and ') : 'the exact version information';
   return {
