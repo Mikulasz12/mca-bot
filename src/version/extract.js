@@ -98,6 +98,7 @@ export function extractVersionEvidence({
       pairs: [],
       loaders: unique(loaders),
       vague: [],
+      authoritativeMinecraft: minecraft.length > 0,
     };
   }
 
@@ -191,6 +192,7 @@ export function extractVersionEvidence({
     pairs,
     loaders: uniqueLoaders,
     vague: unique(vague),
+    authoritativeMinecraft: false,
   };
 }
 
@@ -203,6 +205,7 @@ export function mergeSourceEvidence(base, extra) {
     pairs: [...(base.pairs ?? [])],
     loaders: unique([...(base.loaders ?? []), ...(extra.loaders ?? [])]),
     vague: unique([...(base.vague ?? []), ...(extra.vague ?? [])]),
+    authoritativeMinecraft: Boolean(base.authoritativeMinecraft || extra.authoritativeMinecraft),
   };
   for (const pair of extra.pairs ?? []) addPair(merged.pairs, pair);
   if (merged.loaders.length === 1) {
