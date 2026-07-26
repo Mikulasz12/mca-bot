@@ -1,0 +1,134 @@
+name: Deploy MCA Bot
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mca-bot-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Check source syntax
+        run: npm run check
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Configure SSH
+        env:
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${VPS_SSH_KEY:-}"
+          test -n "${VPS_KNOWN_HOSTS:-}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Upload release
+        env:
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          test -n "${VPS_APP_DIR:-}"
+          test -n "${VPS_HOST:-}"
+          test -n "${VPS_USER:-}"
+          PORT="${VPS_PORT:-22}"
+          RELEASE_DIR="$VPS_APP_DIR/releases/$GITHUB_SHA"
+          SSH_ARGS="-p $PORT -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o IdentitiesOnly=yes"
+
+          ssh $SSH_ARGS "$VPS_USER@$VPS_HOST" "mkdir -p '$RELEASE_DIR'"
+          rsync -az --delete \
+            --exclude .git/ \
+            --exclude .github/ \
+            --exclude node_modules/ \
+            --exclude data/ \
+            --exclude exports/ \
+            --exclude .env \
+            -e "ssh $SSH_ARGS" \
+            ./ "$VPS_USER@$VPS_HOST:$RELEASE_DIR/"
+
+      - name: Activate release
+        env:
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          PORT="${VPS_PORT:-22}"
+          RELEASE_DIR="$VPS_APP_DIR/releases/$GITHUB_SHA"
+          CURRENT_DIR="$VPS_APP_DIR/current"
+          SHARED_DIR="$VPS_APP_DIR/shared"
+          SSH_ARGS="-p $PORT -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o IdentitiesOnly=yes"
+
+          ssh $SSH_ARGS "$VPS_USER@$VPS_HOST" "
+            set -euo pipefail
+            RELEASE_DIR='$RELEASE_DIR'
+            CURRENT_DIR='$CURRENT_DIR'
+            SHARED_DIR='$SHARED_DIR'
+
+            mkdir -p \"\$SHARED_DIR/data\" \"\$SHARED_DIR/exports\" \"\$SHARED_DIR/env\"
+            rm -rf \"\$RELEASE_DIR/data\" \"\$RELEASE_DIR/exports\"
+            ln -sfn \"\$SHARED_DIR/data\" \"\$RELEASE_DIR/data\"
+            ln -sfn \"\$SHARED_DIR/exports\" \"\$RELEASE_DIR/exports\"
+            cd \"\$RELEASE_DIR\"
+            npm ci --omit=dev
+            ln -sfn \"\$RELEASE_DIR\" \"\$CURRENT_DIR.next\"
+            mv -Tf \"\$CURRENT_DIR.next\" \"\$CURRENT_DIR\"
+
+            if [ ! -f \"\$SHARED_DIR/env/.env\" ]; then
+              echo 'Server .env is missing; release is installed but mca-bot remains stopped.'
+              pm2 delete mca-bot >/dev/null 2>&1 || true
+              pm2 save
+              exit 0
+            fi
+
+            ln -sfn \"\$SHARED_DIR/env/.env\" \"\$CURRENT_DIR/.env\"
+            pm2 delete mca-bot >/dev/null 2>&1 || true
+            PM2_CWD=\"\$CURRENT_DIR\" pm2 start \"\$CURRENT_DIR/ops/pm2/ecosystem.config.cjs\" --only mca-bot --env production
+            pm2 save
+            pm2 status mca-bot
+            cd \"$VPS_APP_DIR/releases\"
+            ls -1dt -- */ 2>/dev/null | tail -n +6 | xargs -r rm -rf --
+          "

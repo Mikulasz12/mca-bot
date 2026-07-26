@@ -74,6 +74,41 @@ npm start
 
 The bot registers `/scan export` globally, registers `/cache` immediately in guild `747184859386085380`, loads or refreshes the local Modrinth and Mojang caches, and begins listening for newly created forum threads. Existing threads are not warned when the bot starts.
 
+## Production deployment
+
+The repository includes a GitHub Actions deployment workflow for a PM2-managed
+VPS. Add these repository secrets before pushing to `master`:
+
+- `VPS_HOST`
+- `VPS_PORT` (optional; defaults to `22`)
+- `VPS_USER`
+- `VPS_APP_DIR` (for example, `/var/www/mca-bot`)
+- `VPS_SSH_KEY`
+- `VPS_KNOWN_HOSTS`
+
+The workflow stores the active release at `VPS_APP_DIR/current` and preserves
+catalogue caches and export files in `VPS_APP_DIR/shared`.
+
+After the first release, create the server-only configuration file:
+
+```bash
+nano /var/www/mca-bot/shared/env/.env
+```
+
+Use the values from `.env.example`, including `DISCORD_TOKEN`. Then rerun the
+**Deploy MCA Bot** workflow from GitHub Actions, or start the installed release
+manually:
+
+```bash
+cd /var/www/mca-bot/current
+ln -sfn /var/www/mca-bot/shared/env/.env .env
+PM2_CWD=/var/www/mca-bot/current pm2 start ops/pm2/ecosystem.config.cjs --only mca-bot --env production
+pm2 save
+```
+
+The workflow deliberately keeps `mca-bot` stopped while the server `.env` is
+absent, so a release cannot start without a Discord token.
+
 ## Live version guidance
 
 When a new configured forum thread lacks usable Minecraft or MCA Reborn version information, the bot immediately replies to the starter and pings the thread owner.
