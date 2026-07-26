@@ -13,7 +13,7 @@ function message({ id, authorId, content = '', bot = false, created = 0, attachm
   };
 }
 
-function makeThread({ parentId = 'forum-1', starterFailures = 0 } = {}) {
+function makeThread({ parentId = 'forum-1', starterFailures = 0, starterError = null, tagNames = ['MCA 1.21.1'] } = {}) {
   const starter = message({ id: 'thread-1', authorId: 'owner', content: 'Minecraft: 1.21.1', created: 1 });
   let attempts = 0;
   const messages = [
@@ -29,11 +29,12 @@ function makeThread({ parentId = 'forum-1', starterFailures = 0 } = {}) {
     name: 'Help me',
     archived: false,
     locked: false,
-    appliedTags: ['tag-1'],
-    parent: { availableTags: [{ id: 'tag-1', name: 'MCA 1.21.1' }] },
+    appliedTags: tagNames.map((_, index) => `tag-${index + 1}`),
+    parent: { availableTags: tagNames.map((name, index) => ({ id: `tag-${index + 1}`, name })) },
     async fetchStarterMessage() {
       attempts += 1;
-      if (attempts <= starterFailures) throw new Error('Unknown Message');
+      if (starterError) throw starterError;
+      if (attempts <= starterFailures) throw new Error('Temporary starter failure');
       return starter;
     },
     messages: {
@@ -79,9 +80,9 @@ test('surfaces archived and locked state', async () => {
   assert.equal(snapshot.locked, true);
 });
 
-test('fails after three starter attempts', async () => {
+test('fails after three temporary starter attempts', async () => {
   const reader = createThreadReader({ forumChannelIds: ['forum-1'], sleep: async () => {} });
-  await assert.rejects(() => reader.read(makeThread({ starterFailures: 3 })), /Unknown Message/);
+  await assert.rejects(() => reader.read(makeThread({ starterFailures: 3 })), /Temporary starter failure/);
 });
 
 test('retries when Discord temporarily returns no starter message', async () => {
@@ -99,4 +100,32 @@ test('retries when Discord temporarily returns no starter message', async () => 
   assert.equal(snapshot.starterId, 'thread-1');
   assert.equal(calls, 2);
   assert.deepEqual(waits, [250]);
+});
+
+test('skips excluded help tags before fetching the starter or history', async () => {
+  const reader = createThreadReader({ forumChannelIds: ['forum-1'], sleep: async () => {} });
+
+  for (const excludedTag of ['Server Help', 'Non-MCA Help', 'Translation Help', '  server help  ']) {
+    const thread = makeThread({ tagNames: ['MCA 1.21.1', excludedTag] });
+    let historyFetches = 0;
+    thread.messages.fetch = async () => {
+      historyFetches += 1;
+      throw new Error('history should not be fetched');
+    };
+
+    assert.equal(await reader.read(thread), null);
+    assert.equal(thread.starterAttempts, 0);
+    assert.equal(historyFetches, 0);
+  }
+});
+
+test('retries an unavailable starter before treating Unknown Message as deletion', async () => {
+  const error = Object.assign(new Error('Unknown Message'), { code: 10008 });
+  const thread = makeThread({ starterError: error });
+  const waits = [];
+  const reader = createThreadReader({ forumChannelIds: ['forum-1'], sleep: async (ms) => waits.push(ms) });
+
+  await assert.rejects(() => reader.read(thread), (received) => received === error);
+  assert.equal(thread.starterAttempts, 3);
+  assert.deepEqual(waits, [250, 750]);
 });
