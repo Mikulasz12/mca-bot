@@ -60,3 +60,14 @@ test('sends info payload in the message thread', async () => {
   await h.adapter.sendInfo({ channel: h.thread }, { embeds: [{ title: 'Info' }] });
   assert.deepEqual(h.sent, [{ embeds: [{ title: 'Info' }] }]);
 });
+
+test('ignores Discord unknown-channel deletion errors', async () => {
+  const h = setup({ deleteError: { rawError: { code: 10003 } } });
+  await h.adapter.deleteMessage('thread-1', 'gone');
+});
+
+test('surfaces unexpected deletion errors', async () => {
+  const error = new Error('Missing Access');
+  const h = setup({ deleteError: error });
+  await assert.rejects(() => h.adapter.deleteMessage('thread-1', 'message-1'), (received) => received === error);
+});
