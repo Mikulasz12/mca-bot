@@ -82,3 +82,33 @@ test('uses a bare MCA post title with an MCA Minecraft-version forum tag', () =>
   assert.deepEqual(result.sources[0].rejectedMca, []);
   assert.deepEqual(result.mca.rejected, []);
 });
+
+test('forum Minecraft tag wins in the exact title-conflict case', () => {
+  const result = detect(['hi'], { title: '1.21.1', tags: ['MCA 26.1.2'] });
+
+  assert.equal(result.resolved.minecraft.status, 'present');
+  assert.equal(result.resolved.minecraft.value, '26.1.2');
+  assert.equal(result.resolved.mca.status, 'missing');
+});
+
+test('forum Minecraft tag overrides conflicting title and owner replies', () => {
+  const result = detect(
+    ['Minecraft: 1.21.1', 'Minecraft: 1.20.1', 'MCA: 7.9.0'],
+    { title: '1.21.1', tags: ['MCA 26.1.2'] },
+  );
+
+  assert.equal(result.resolved.minecraft.status, 'present');
+  assert.equal(result.resolved.minecraft.value, '26.1.2');
+  assert.equal(result.resolved.mca.value, '7.9.0');
+});
+
+test('conflicting forum Minecraft tags remain authoritative and ambiguous', () => {
+  const result = detect(
+    ['Minecraft: 1.21.1', 'MCA: 7.9.0'],
+    { tags: ['MCA 26.1.2', 'MCA 26.2'] },
+  );
+
+  assert.equal(result.resolved.minecraft.status, 'ambiguous');
+  assert.deepEqual(result.resolved.minecraft.values, ['26.1.2', '26.2']);
+  assert.equal(result.resolved.mca.value, '7.9.0');
+});
