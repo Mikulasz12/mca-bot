@@ -2,13 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createInfoHandler } from '../src/guidance/info-handler.js';
 
-function makeMessage({ content = 'info', userId = 'user', parentId = 'forum-1', bot = false, manage = false, threadId = 'thread-1' } = {}) {
+let nextMessageId = 1;
+
+function makeMessage({ content = 'info', userId = 'user', parentId = 'forum-1', bot = false, manage = false, threadId = 'thread-1', tagNames = ['MCA 1.21.1'] } = {}) {
   return {
-    id: `message-${Math.random()}`,
+    id: `message-${nextMessageId++}`,
     content,
     author: { id: userId, bot },
     channelId: threadId,
-    channel: { id: threadId, parentId, isThread: () => true },
+    channel: {
+      id: threadId,
+      parentId,
+      isThread: () => true,
+      appliedTags: tagNames.map((_, index) => `tag-${index + 1}`),
+      parent: { availableTags: tagNames.map((name, index) => ({ id: `tag-${index + 1}`, name })) },
+    },
     manage,
   };
 }
@@ -62,4 +70,12 @@ test('Manage Messages bypasses cooldown', async () => {
   await h.handler.handle(message, h.adapter);
   await h.handler.handle({ ...message, id: 'again' }, h.adapter);
   assert.equal(h.sent.length, 2);
+});
+
+test('ignores info in excluded support categories', async () => {
+  const h = setup();
+  for (const excludedTag of ['Server Help', 'Non-MCA Help', 'Translation Help']) {
+    assert.equal(await h.handler.handle(makeMessage({ tagNames: [excludedTag] }), h.adapter), false);
+  }
+  assert.equal(h.sent.length, 0);
 });
