@@ -1,6 +1,7 @@
 import { detectThreadVersions } from '../version/detect.js';
 import { buildMainWarning, buildProgressAcknowledgement, buildReminder } from './messages.js';
 import { diagnoseVersions } from './policy.js';
+import { isMissingDiscordResource, isUnknownChannel, isUnknownMessage } from './discord-errors.js';
 
 function errorText(error) {
   return error instanceof Error ? error.message : String(error);
@@ -17,13 +18,16 @@ export function createGuidanceCoordinator({
   logger = console,
 }) {
   const active = new Map();
+  let closed = false;
 
   async function safeDelete(threadId, messageId) {
-    if (!messageId) return;
+    if (!messageId || closed) return;
     try {
       await adapter.deleteMessage(threadId, messageId);
     } catch (error) {
-      logger.error(`Failed to delete guidance message ${messageId}: ${errorText(error)}`);
+      if (!isMissingDiscordResource(error)) {
+        logger.error(`Failed to delete guidance message ${messageId}: ${errorText(error)}`);
+      }
     }
   }
 
@@ -44,6 +48,7 @@ export function createGuidanceCoordinator({
 
   function schedule(state) {
     invalidateTimer(state);
+    if (closed) return;
     if (state.reminderCount >= 2) return;
     const generation = state.timerGeneration;
     state.timer = setTimer(async () => {
@@ -63,6 +68,7 @@ export function createGuidanceCoordinator({
   }
 
   async function updateMain(state, snapshot, diagnosis) {
+    if (closed) return false;
     const payload = buildMainWarning({
       ownerId: snapshot.ownerId,
       diagnosis,
@@ -70,11 +76,28 @@ export function createGuidanceCoordinator({
     });
     try {
       await adapter.editMessage(state.threadId, state.warningId, payload);
+      return true;
     } catch (error) {
-      logger.error(`Failed to edit guidance message ${state.warningId}: ${errorText(error)}`);
+      if (closed) return false;
+      if (isUnknownChannel(error)) {
+        await removeState(state, { cleanup: false });
+        return false;
+      }
+      if (!isUnknownMessage(error)) {
+        logger.error(`Failed to edit guidance message ${state.warningId}: ${errorText(error)}`);
+      }
       await safeDelete(state.threadId, state.warningId);
-      const replacement = await adapter.sendMain(state.thread, snapshot, payload);
-      state.warningId = replacement.id;
+      try {
+        const replacement = await adapter.sendMain(state.thread, snapshot, payload);
+        state.warningId = replacement.id;
+        return true;
+      } catch (replacementError) {
+        if (isMissingDiscordResource(replacementError)) {
+          await removeState(state, { cleanup: false });
+          return false;
+        }
+        throw replacementError;
+      }
     }
   }
 
@@ -88,17 +111,23 @@ export function createGuidanceCoordinator({
   }
 
   async function performCheck(state, { mode, messageId = null, generation = null }) {
+    if (closed || active.get(state.threadId) !== state) return;
     if (generation !== null && state.timerGeneration !== generation) return;
 
     let snapshot;
     try {
       snapshot = await reader.read(state.thread);
     } catch (error) {
-      logger.error(`Failed to read thread ${state.threadId}: ${errorText(error)}`);
-      await removeState(state);
+      if (closed || isMissingDiscordResource(error)) {
+        await removeState(state, { cleanup: false });
+      } else {
+        logger.error(`Failed to read thread ${state.threadId}: ${errorText(error)}`);
+        await removeState(state);
+      }
       return;
     }
 
+    if (closed || active.get(state.threadId) !== state) return;
     if (generation !== null && state.timerGeneration !== generation) return;
     if (!snapshot || snapshot.archived || snapshot.locked) {
       await removeState(state);
@@ -121,7 +150,7 @@ export function createGuidanceCoordinator({
       state.catalogueRevision = catalogueService.revision();
       state.minecraftRevision = minecraftService.revision();
       state.invalidAttemptCount += 1;
-      await updateMain(state, snapshot, diagnosis);
+      if (!await updateMain(state, snapshot, diagnosis)) return;
 
       if (mode === 'owner' && messageId) {
         try {
@@ -136,6 +165,10 @@ export function createGuidanceCoordinator({
             }),
           ));
         } catch (error) {
+          if (isMissingDiscordResource(error)) {
+            await removeState(state, { cleanup: false });
+            return;
+          }
           logger.error(`Failed to acknowledge version progress in thread ${state.threadId}: ${errorText(error)}`);
         }
       } else if (state.responseId) {
@@ -151,7 +184,7 @@ export function createGuidanceCoordinator({
       state.lastDiagnosisFingerprint = diagnosis.fingerprint;
       state.catalogueRevision = catalogueService.revision();
       state.minecraftRevision = minecraftService.revision();
-      await updateMain(state, snapshot, diagnosis);
+      if (!await updateMain(state, snapshot, diagnosis)) return;
     }
 
     if (state.reminderCount >= 2) return;
@@ -169,7 +202,11 @@ export function createGuidanceCoordinator({
       ));
       state.reminderCount = reminderNumber;
     } catch (error) {
-      logger.error(`Failed to send reminder in thread ${state.threadId}: ${errorText(error)}`);
+      if (isMissingDiscordResource(error)) {
+        await removeState(state, { cleanup: false });
+      } else {
+        logger.error(`Failed to send reminder in thread ${state.threadId}: ${errorText(error)}`);
+      }
       return;
     }
 
@@ -177,6 +214,7 @@ export function createGuidanceCoordinator({
   }
 
   async function check(threadId, options) {
+    if (closed) return;
     const state = active.get(threadId);
     if (!state) return;
     if (state.checking) return state.checking;
@@ -188,16 +226,19 @@ export function createGuidanceCoordinator({
 
   return {
     async start(thread) {
-      if (active.has(thread.id)) return false;
+      if (closed || active.has(thread.id)) return false;
 
       let snapshot;
       try {
         snapshot = await reader.read(thread);
       } catch (error) {
-        logger.error(`Failed to inspect new thread ${thread.id}: ${errorText(error)}`);
+        if (!closed && !isMissingDiscordResource(error)) {
+          logger.error(`Failed to inspect new thread ${thread.id}: ${errorText(error)}`);
+        }
         return false;
       }
 
+      if (closed) return false;
       if (!snapshot || snapshot.archived || snapshot.locked) return false;
       const diagnosis = diagnose(snapshot);
       if (diagnosis.complete) return false;
@@ -210,7 +251,9 @@ export function createGuidanceCoordinator({
           buildMainWarning({ ownerId: snapshot.ownerId, diagnosis, starterId: snapshot.starterId }),
         );
       } catch (error) {
-        logger.error(`Failed to send guidance in thread ${thread.id}: ${errorText(error)}`);
+        if (!closed && !isMissingDiscordResource(error)) {
+          logger.error(`Failed to send guidance in thread ${thread.id}: ${errorText(error)}`);
+        }
         return false;
       }
 
@@ -267,6 +310,13 @@ export function createGuidanceCoordinator({
     async stop(threadId) {
       const state = active.get(threadId);
       if (state) await removeState(state);
+    },
+
+    shutdown() {
+      if (closed) return;
+      closed = true;
+      for (const state of active.values()) invalidateTimer(state);
+      active.clear();
     },
 
     isTracking(threadId) {
