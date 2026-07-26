@@ -1,5 +1,5 @@
 import { detectThreadVersions } from '../version/detect.js';
-import { buildMainWarning, buildProgressAcknowledgement, buildReminder } from './messages.js';
+import { buildMainWarning, buildProgressAcknowledgement, buildReminder, buildUpdateAdvisory } from './messages.js';
 import { diagnoseVersions } from './policy.js';
 import { isMissingDiscordResource, isUnknownChannel, isUnknownMessage } from './discord-errors.js';
 
@@ -48,8 +48,7 @@ export function createGuidanceCoordinator({
 
   function schedule(state) {
     invalidateTimer(state);
-    if (closed) return;
-    if (state.reminderCount >= 2) return;
+    if (closed || state.reminderCount >= 2) return;
     const generation = state.timerGeneration;
     state.timer = setTimer(async () => {
       const current = active.get(state.threadId);
@@ -110,6 +109,21 @@ export function createGuidanceCoordinator({
     state.responseId = message.id;
   }
 
+  async function sendUpdateAdvisory(thread, snapshot, diagnosis, messageId) {
+    if (closed || !diagnosis.updateAvailable) return;
+    try {
+      await adapter.sendResponse(
+        thread,
+        snapshot,
+        buildUpdateAdvisory({ ownerId: snapshot.ownerId, diagnosis, messageId }),
+      );
+    } catch (error) {
+      if (!isMissingDiscordResource(error)) {
+        logger.error(`Failed to send MCA update advisory in thread ${thread.id}: ${errorText(error)}`);
+      }
+    }
+  }
+
   async function performCheck(state, { mode, messageId = null, generation = null }) {
     if (closed || active.get(state.threadId) !== state) return;
     if (generation !== null && state.timerGeneration !== generation) return;
@@ -139,6 +153,7 @@ export function createGuidanceCoordinator({
     const diagnosis = diagnose(snapshot);
     if (diagnosis.complete) {
       await removeState(state);
+      await sendUpdateAdvisory(state.thread, snapshot, diagnosis, messageId ?? snapshot.starterId);
       return;
     }
 
@@ -238,10 +253,12 @@ export function createGuidanceCoordinator({
         return false;
       }
 
-      if (closed) return false;
-      if (!snapshot || snapshot.archived || snapshot.locked) return false;
+      if (closed || !snapshot || snapshot.archived || snapshot.locked) return false;
       const diagnosis = diagnose(snapshot);
-      if (diagnosis.complete) return false;
+      if (diagnosis.complete) {
+        await sendUpdateAdvisory(thread, snapshot, diagnosis, snapshot.starterId);
+        return false;
+      }
 
       let warning;
       try {
