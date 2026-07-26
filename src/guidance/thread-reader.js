@@ -1,3 +1,6 @@
+import { isUnknownChannel } from './discord-errors.js';
+import { appliedForumTags, hasExcludedGuidanceTag } from './thread-policy.js';
+
 const STARTER_RETRY_DELAYS = [250, 750];
 
 function valuesOf(collection) {
@@ -28,16 +31,12 @@ async function fetchStarterWithRetry(thread, sleep) {
       if (!starter) throw new Error('Starter message is not available yet');
       return starter;
     } catch (error) {
+      if (isUnknownChannel(error)) throw error;
       lastError = error;
       if (attempt < STARTER_RETRY_DELAYS.length) await sleep(STARTER_RETRY_DELAYS[attempt]);
     }
   }
   throw lastError;
-}
-
-function appliedTags(thread) {
-  const namesById = new Map((thread.parent?.availableTags ?? []).map((tag) => [tag.id, tag.name]));
-  return [...(thread.appliedTags ?? [])].map((id) => ({ id, name: namesById.get(id) ?? null }));
 }
 
 export function createThreadReader({ forumChannelIds, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
@@ -46,6 +45,7 @@ export function createThreadReader({ forumChannelIds, sleep = (ms) => new Promis
   return {
     async read(thread) {
       if (!configured.has(String(thread.parentId))) return null;
+      if (hasExcludedGuidanceTag(thread)) return null;
 
       const starter = await fetchStarterWithRetry(thread, sleep);
       const fetched = await thread.messages.fetch({ limit: 100 });
@@ -61,7 +61,7 @@ export function createThreadReader({ forumChannelIds, sleep = (ms) => new Promis
         archived: Boolean(thread.archived),
         locked: Boolean(thread.locked),
         detectorInput: {
-          tags: appliedTags(thread),
+          tags: appliedForumTags(thread),
           title: String(thread.name ?? ''),
           messages: [
             toDetectorMessage(starter, 'starter'),
