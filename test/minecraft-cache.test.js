@@ -1,30 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  isMinecraftCacheFresh,
-  loadMinecraftVersionCache,
-  writeMinecraftVersionCache,
-} from '../src/minecraft/cache.js';
+import { isMinecraftCacheFresh, loadMinecraftVersionCache, writeMinecraftVersionCache } from '../src/minecraft/cache.js';
 
 const document = {
-  schemaVersion: 1,
-  source: 'mojang-version-manifest-v2',
+  schemaVersion: 2,
   fetchedAt: '2026-07-25T20:00:00.000Z',
-  latest: { release: '26.2', snapshot: '26.2' },
-  versions: [{ id: '26.2', canonicalId: '26.2', type: 'release' }],
+  latestRelease: '26.2',
+  versions: ['26.2', '1.21.1'],
 };
 
-test('loads valid Mojang cache and rejects malformed cache', async () => {
-  assert.deepEqual(await loadMinecraftVersionCache('cache.json', {
-    readFile: async () => JSON.stringify(document),
-  }), document);
-  assert.equal(await loadMinecraftVersionCache('cache.json', {
-    readFile: async () => '{bad',
-  }), null);
+test('loads only the compact v2 Mojang cache schema', async () => {
+  assert.deepEqual(await loadMinecraftVersionCache('cache.json', { readFile: async () => JSON.stringify(document) }), document);
+  assert.equal(await loadMinecraftVersionCache('cache.json', { readFile: async () => JSON.stringify({ ...document, schemaVersion: 1 }) }), null);
+  assert.equal(await loadMinecraftVersionCache('cache.json', { readFile: async () => '{bad' }), null);
 });
 
-test('writes Mojang cache through temporary file and atomic rename', async () => {
+test('writes minified Mojang cache through temporary file and atomic rename', async () => {
   const calls = [];
   await writeMinecraftVersionCache('/tmp/minecraft/cache.json', document, {
     mkdir: async (...args) => calls.push(['mkdir', ...args]),
@@ -34,11 +26,8 @@ test('writes Mojang cache through temporary file and atomic rename', async () =>
     random: () => 'fixed',
   });
   assert.match(calls[1][1], /cache\.json\.fixed\.tmp$/);
-  assert.deepEqual(calls[2].slice(0, 3), [
-    'rename',
-    '/tmp/minecraft/cache.json.fixed.tmp',
-    '/tmp/minecraft/cache.json',
-  ]);
+  assert.equal(calls[1][2], `${JSON.stringify(document)}\n`);
+  assert.deepEqual(calls[2].slice(0, 3), ['rename', '/tmp/minecraft/cache.json.fixed.tmp', '/tmp/minecraft/cache.json']);
 });
 
 test('uses the six-hour Mojang cache freshness window', () => {

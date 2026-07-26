@@ -3,26 +3,15 @@ import test from 'node:test';
 
 import { isCacheFresh, loadCatalogueCache, writeCatalogueCache } from '../src/modrinth/cache.js';
 
-const valid = {
-  schemaVersion: 1,
-  projectId: '1W98a849',
-  fetchedAt: '2026-07-25T20:00:00.000Z',
-  versions: [{ id: 'a', mcaVersion: '7.7.22' }],
-};
+const valid = { schemaVersion: 2, fetchedAt: '2026-07-25T20:00:00.000Z', versions: [['7.7.22', ['1.21.1'], ['fabric'], 'r', 1752969600, 'a']] };
 
-test('loads valid cache and rejects malformed or missing cache', async () => {
-  assert.deepEqual(await loadCatalogueCache('cache.json', {
-    readFile: async () => JSON.stringify(valid),
-  }), valid);
-  assert.equal(await loadCatalogueCache('cache.json', {
-    readFile: async () => '{bad json',
-  }), null);
-  assert.equal(await loadCatalogueCache('cache.json', {
-    readFile: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
-  }), null);
+test('loads only the compact v2 Modrinth cache schema', async () => {
+  assert.deepEqual(await loadCatalogueCache('cache.json', { readFile: async () => JSON.stringify(valid) }), valid);
+  assert.equal(await loadCatalogueCache('cache.json', { readFile: async () => JSON.stringify({ ...valid, schemaVersion: 1 }) }), null);
+  assert.equal(await loadCatalogueCache('cache.json', { readFile: async () => '{bad json' }), null);
 });
 
-test('publishes cache through temporary file and atomic rename', async () => {
+test('publishes minified cache through temporary file and atomic rename', async () => {
   const calls = [];
   await writeCatalogueCache('/tmp/data/cache.json', valid, {
     mkdir: async (...args) => calls.push(['mkdir', ...args]),
@@ -32,6 +21,7 @@ test('publishes cache through temporary file and atomic rename', async () => {
     random: () => 'fixed',
   });
   assert.match(calls[1][1], /cache\.json\.fixed\.tmp$/);
+  assert.equal(calls[1][2], `${JSON.stringify(valid)}\n`);
   assert.deepEqual(calls[2].slice(0, 3), ['rename', '/tmp/data/cache.json.fixed.tmp', '/tmp/data/cache.json']);
 });
 
