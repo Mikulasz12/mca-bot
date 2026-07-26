@@ -47,6 +47,10 @@ const catalogue = normaliseModrinthVersions([
     version_type: 'release', status: 'listed', date_published: '2026-07-20T00:00:00Z', files: [{ primary: true, filename: 'good.jar' }],
   },
   {
+    id: 'new-1211', version_number: '7.7.23+1.21.1', game_versions: ['1.21.1'], loaders: ['neoforge'],
+    version_type: 'release', status: 'listed', date_published: '2026-07-21T00:00:00Z', files: [{ primary: true, filename: 'new-1211.jar' }],
+  },
+  {
     id: 'new', version_number: '7.9.6+26.1.2', game_versions: ['26.1.2'], loaders: ['fabric'],
     version_type: 'release', status: 'listed', date_published: '2026-07-21T00:00:00Z', files: [{ primary: true, filename: 'new.jar' }],
   },
@@ -131,11 +135,13 @@ test('keeps an explicit unknown development pair eligible even when its Minecraf
   assert.equal(diagnosis.complete, true);
 });
 
-const minecraftManifest = [
-  Object.freeze({ id: '1.21.1', canonicalId: '1.21.1', type: 'release' }),
-  Object.freeze({ id: '26.1.2', canonicalId: '26.1.2', type: 'release' }),
-  Object.freeze({ id: '26.2', canonicalId: '26.2', type: 'release' }),
-];
+const minecraftManifest = new Set(['1.21.1', '26.1.2', '26.2']);
+
+test('marks a newer compatible MCA release as an optional update', () => {
+  const diagnosis = diagnoseVersions(detected(['7.7.22+1.21.1', 'neoforge']), catalogue, minecraftManifest);
+  assert.equal(diagnosis.complete, true);
+  assert.equal(diagnosis.updateAvailable.entry.mcaVersion, '7.7.23');
+});
 
 test('rejects a version absent from Mojang without special-casing its number', () => {
   const diagnosis = diagnoseVersions(detected(['1.23.4']), catalogue, minecraftManifest);
