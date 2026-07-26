@@ -10,12 +10,19 @@ function field(values = []) {
 }
 
 export function resolveVersionEvidence(sources = []) {
-  let minecraft = field();
+  const ordered = [...sources].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  const authoritativeMinecraft = field(
+    ordered
+      .filter((source) => source.authoritativeMinecraft)
+      .flatMap((source) => source.minecraft ?? []),
+  );
+  const minecraftLocked = authoritativeMinecraft.status !== 'missing';
+
+  let minecraft = minecraftLocked ? authoritativeMinecraft : field();
   let mca = field();
   let loader = field();
   let pair = null;
 
-  const ordered = [...sources].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
   for (const source of ordered) {
     const pairs = source.pairs ?? [];
     if (pairs.length > 0) {
@@ -25,9 +32,14 @@ export function resolveVersionEvidence(sources = []) {
           uniquePairs.push(item);
         }
       }
-      minecraft = field(uniquePairs.map((item) => item.minecraft));
+
+      if (!minecraftLocked) minecraft = field(uniquePairs.map((item) => item.minecraft));
       mca = field(uniquePairs.map((item) => item.mca));
-      if (uniquePairs.length === 1) {
+
+      const pairMatchesMinecraft = !minecraftLocked || (
+        minecraft.status === 'present' && uniquePairs[0]?.minecraft === minecraft.value
+      );
+      if (uniquePairs.length === 1 && pairMatchesMinecraft) {
         pair = { ...uniquePairs[0] };
         if (pair.loader) loader = field([pair.loader]);
       } else {
@@ -38,7 +50,7 @@ export function resolveVersionEvidence(sources = []) {
       continue;
     }
 
-    if ((source.minecraft ?? []).length > 0) {
+    if (!minecraftLocked && (source.minecraft ?? []).length > 0) {
       minecraft = field(source.minecraft);
       pair = null;
     }
