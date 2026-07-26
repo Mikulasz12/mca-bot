@@ -1,10 +1,8 @@
+import { isMissingDiscordResource } from './discord-errors.js';
+
 function editablePayload(payload) {
   const { reply: _reply, ...editable } = payload ?? {};
   return editable;
-}
-
-function isUnknownMessage(error) {
-  return error?.code === 10008 || error?.rawError?.code === 10008;
 }
 
 export function createGuidanceDiscordAdapter(client) {
@@ -39,7 +37,7 @@ export function createGuidanceDiscordAdapter(client) {
       try {
         await thread.messages.delete(messageId);
       } catch (error) {
-        if (!isUnknownMessage(error)) throw error;
+        if (!isMissingDiscordResource(error)) throw error;
       }
     },
 
