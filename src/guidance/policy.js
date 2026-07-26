@@ -1,4 +1,10 @@
-import { checkCompatibility, findLatestCompatible } from '../modrinth/catalogue.js';
+import {
+  checkCompatibility,
+  findLatestCompatible,
+  hasMcaVersion,
+  isModrinthCatalogueAvailable,
+  supportsMinecraftVersion,
+} from '../modrinth/catalogue.js';
 import { hasMinecraftVersion } from '../minecraft/catalogue.js';
 
 function unique(values) {
@@ -33,10 +39,6 @@ function rejectedMca(result) {
   return raw;
 }
 
-function listedModrinthEntries(catalogue) {
-  return Array.isArray(catalogue) ? catalogue.filter((entry) => entry?.status === 'listed') : [];
-}
-
 function diagnosisFingerprint(diagnosis) {
   return JSON.stringify({
     minecraft: diagnosis.minecraftField,
@@ -49,19 +51,22 @@ function diagnosisFingerprint(diagnosis) {
     invalid: diagnosis.invalid,
     recommendation: diagnosis.recommendation?.status ?? null,
     recommendedVersion: diagnosis.recommendation?.entry?.mcaVersion ?? null,
+    updateVersion: diagnosis.updateAvailable?.entry?.mcaVersion ?? null,
   });
 }
 
-function minecraftState({ minecraftField, modrinthEntries, minecraftCatalogue, strongUnknownPair }) {
+function minecraftState({ minecraftField, catalogue, minecraftCatalogue, strongUnknownPair }) {
   if (minecraftField.status !== 'present') {
     return { eligible: false, validity: minecraftField.status, reason: null, missing: null };
   }
 
-  const mojangAvailable = Array.isArray(minecraftCatalogue) && minecraftCatalogue.length > 0;
-  const modrinthAvailable = modrinthEntries.length > 0;
+  const mojangAvailable = minecraftCatalogue instanceof Set
+    ? minecraftCatalogue.size > 0
+    : Array.isArray(minecraftCatalogue) && minecraftCatalogue.length > 0;
+  const modrinthAvailable = isModrinthCatalogueAvailable(catalogue);
   const existsInMojang = mojangAvailable ? hasMinecraftVersion(minecraftCatalogue, minecraftField.value) : null;
   const supportedByMca = modrinthAvailable
-    ? modrinthEntries.some((entry) => entry.minecraftVersions?.includes(minecraftField.value))
+    ? supportsMinecraftVersion(catalogue, minecraftField.value)
     : null;
 
   if (mojangAvailable && !existsInMojang) {
@@ -69,7 +74,7 @@ function minecraftState({ minecraftField, modrinthEntries, minecraftCatalogue, s
       eligible: false,
       validity: 'unknown-minecraft-version',
       missing: 'Recognised Minecraft Java version',
-      reason: `Minecraft \`${minecraftField.value}\` is not present in the official Mojang Java launcher version manifest.`,
+      reason: `Minecraft \`${minecraftField.value}\` is not present in the official Mojang Java release manifest.`,
     };
   }
 
@@ -99,16 +104,16 @@ function minecraftState({ minecraftField, modrinthEntries, minecraftCatalogue, s
   };
 }
 
-function mcaState({ mcaField, modrinthEntries, strongEvidence }) {
+function mcaState({ mcaField, catalogue, strongEvidence }) {
   if (mcaField.status !== 'present') {
     return { eligible: false, validity: mcaField.status, reason: null, missing: null };
   }
 
-  if (modrinthEntries.length === 0) {
+  if (!isModrinthCatalogueAvailable(catalogue)) {
     return { eligible: true, validity: 'syntax-fallback', reason: null, missing: null };
   }
 
-  const listed = modrinthEntries.some((entry) => entry.mcaVersion === mcaField.value);
+  const listed = hasMcaVersion(catalogue, mcaField.value);
   if (listed) return { eligible: true, validity: 'listed-public-release', reason: null, missing: null };
   if (strongEvidence) {
     return {
@@ -150,19 +155,17 @@ export function diagnoseVersions(result, catalogue = null, minecraftCatalogue = 
   }
   if ((result.vague ?? []).length > 0) reasons.push('Words such as “latest” or “newest” are not an exact version.');
 
-  const modrinthEntries = listedModrinthEntries(catalogue);
   const strongEvidence = Boolean(resolved.pair?.explicit);
-  const publicMcaKnown = mcaField.status === 'present' &&
-    modrinthEntries.some((entry) => entry.mcaVersion === mcaField.value);
+  const publicMcaKnown = mcaField.status === 'present' && hasMcaVersion(catalogue, mcaField.value);
   const strongUnknownPair = strongEvidence && !publicMcaKnown;
 
   const minecraft = minecraftState({
     minecraftField,
-    modrinthEntries,
+    catalogue,
     minecraftCatalogue,
     strongUnknownPair,
   });
-  const mca = mcaState({ mcaField, modrinthEntries, strongEvidence });
+  const mca = mcaState({ mcaField, catalogue, strongEvidence });
 
   if (minecraft.reason) {
     reasons.push(minecraft.reason);
@@ -179,6 +182,7 @@ export function diagnoseVersions(result, catalogue = null, minecraftCatalogue = 
     minecraft.eligible && mca.eligible;
   let compatibility = exactEligible ? 'catalogue-unavailable' : 'not-checked';
   let recommendation = null;
+  let updateAvailable = null;
   let complete = false;
 
   if (exactEligible) {
@@ -189,6 +193,7 @@ export function diagnoseVersions(result, catalogue = null, minecraftCatalogue = 
     });
     compatibility = compatibilityResult.status;
     recommendation = compatibilityResult.recommendation ?? null;
+    updateAvailable = compatibilityResult.updateAvailable ?? null;
     if (compatibility === 'known-incompatible') {
       missing.push(`Compatible MCA Reborn version for Minecraft \`${minecraftField.value}\``);
       const loaderText = loaderField.status === 'present' ? ` with ${loaderField.value}` : '';
@@ -219,6 +224,7 @@ export function diagnoseVersions(result, catalogue = null, minecraftCatalogue = 
     invalid: unique(invalid),
     compatibility,
     recommendation,
+    updateAvailable,
     minecraftEligible: minecraft.eligible,
     mcaEligible: mca.eligible,
     minecraftValidity: minecraft.validity,
