@@ -32,6 +32,20 @@ function recommendationText(diagnosis) {
   return null;
 }
 
+function prereleaseFields(diagnosis) {
+  const fields = [];
+  for (const [type, label] of [['beta', 'Beta available'], ['alpha', 'Alpha available']]) {
+    const entry = diagnosis.prereleases?.[type];
+    if (!entry) continue;
+    const loaders = entry.loaders?.length ? ` for ${entry.loaders.join(', ')}` : '';
+    fields.push({
+      name: label,
+      value: `**MCA Reborn ${entry.mcaVersion}**${loaders}: ${entry.url}\nThis is an experimental prerelease and may be less stable than the public release.`,
+    });
+  }
+  return fields;
+}
+
 export function buildMainWarning({ ownerId, diagnosis, starterId }) {
   const fields = [];
   if (diagnosis.missing.length > 0) fields.push({ name: 'Missing or unclear', value: list(diagnosis.missing) });
@@ -39,6 +53,7 @@ export function buildMainWarning({ ownerId, diagnosis, starterId }) {
   if (diagnosis.reasons.length > 0) fields.push({ name: 'Why', value: list(diagnosis.reasons) });
   const recommendation = recommendationText(diagnosis);
   if (recommendation) fields.push({ name: 'Compatible Modrinth release', value: recommendation });
+  fields.push(...prereleaseFields(diagnosis));
 
   fields.push(
     {
@@ -64,7 +79,7 @@ export function buildMainWarning({ ownerId, diagnosis, starterId }) {
         description:
           'Please provide the exact Minecraft and MCA Reborn versions that reproduce the problem. “Latest” or “newest” is not specific enough.',
         fields,
-        footer: { text: 'For more information, type `info` in this thread.' },
+        footer: { text: 'Use /info for more information.' },
       },
     ],
   };
@@ -87,6 +102,7 @@ export function buildProgressAcknowledgement({ ownerId, diagnosis, messageId, in
   const fields = [];
   const recommendation = recommendationText(diagnosis);
   if (recommendation) fields.push({ name: 'Recommended compatible release', value: recommendation });
+  fields.push(...prereleaseFields(diagnosis));
 
   if (invalidAttemptCount >= 2) {
     fields.push({
@@ -121,7 +137,7 @@ export function buildUpdateAdvisory({ ownerId, diagnosis, messageId }) {
       color: INFO_COLOR,
       title: 'MCA Reborn update available',
       description: `Your MCA Reborn version \`${diagnosis.mcaVersion}\` is valid, but **${update.entry.mcaVersion}** is the newest compatible public release for Minecraft \`${diagnosis.minecraftVersion}\`${loaders}. Updating is optional, but it may include fixes already made after your installed version.`,
-      fields: [{ name: 'Download', value: update.entry.url }],
+      fields: [{ name: 'Download', value: update.entry.url }, ...prereleaseFields(diagnosis)],
     }],
   };
 }
@@ -135,10 +151,9 @@ export function buildReminder({ ownerId, diagnosis, starterId, reminderNumber })
   };
 }
 
-export function buildInfoReply({ messageId }) {
-  return {
+export function buildInfoReply({ messageId } = {}) {
+  const payload = {
     allowedMentions: noMentions(),
-    reply: replyTo(messageId),
     embeds: [
       {
         color: INFO_COLOR,
@@ -170,4 +185,6 @@ export function buildInfoReply({ messageId }) {
       },
     ],
   };
+  if (messageId) payload.reply = replyTo(messageId);
+  return payload;
 }
