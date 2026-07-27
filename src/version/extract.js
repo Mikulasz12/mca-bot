@@ -125,7 +125,7 @@ export function extractVersionEvidence({
 
   const minecraftLabelled = collectLabelled(
     value,
-    /(?:minecraft(?:\s+version)?|\bmc)\s*[:=-]?\s*(?<version>\d+(?:\.\d+){1,3}(?:\s*[-._ ]?\s*(?:alpha|beta|rc|pre(?:release)?)[-._ ]*\d+)?)/gi,
+    /(?:minecraft(?:\s+(?:version|ver\.?|v\.?))?|\bmc(?:\s+(?:version|ver\.?|v\.?))?)\s*[:=-]?\s*(?<version>\d+(?:\.\d+){1,3}(?:\s*[-._ ]?\s*(?:alpha|beta|rc|pre(?:release)?)[-._ ]*\d+)?)/gi,
   );
   for (const version of minecraftLabelled) {
     if (isMinecraftShape(version)) minecraft.push(version);
@@ -133,7 +133,7 @@ export function extractVersionEvidence({
 
   const mcaLabelled = collectLabelled(
     value,
-    /(?:\bmca(?:\s+reborn)?(?:\s+version)?|\bmod\s+version)\s*[:=-]?\s*(?<version>\d+(?:\.\d+){1,3}(?:\s*[-._ ]?\s*(?:alpha|beta|rc|pre(?:release)?)[-._ ]*\d+)?)/gi,
+    /(?:\bmca(?:\s+reborn)?(?:\s+(?:version|ver\.?|v\.?))?|\bmod\s+(?:version|ver\.?|v\.?))\s*[:=-]?\s*(?<version>\d+(?:\.\d+){1,3}(?:\s*[-._ ]?\s*(?:alpha|beta|rc|pre(?:release)?)[-._ ]*\d+)?)/gi,
   );
   for (const version of mcaLabelled) {
     if (isMcaShape(version)) mca.push(version);
@@ -162,13 +162,6 @@ export function extractVersionEvidence({
     const version = normaliseVersion(bare[1]);
     if (version && isMinecraftShape(version)) minecraft.push(version);
     if (version && isMcaShape(version)) mca.push(version);
-  }
-
-  if (owner) {
-    for (const token of tokens(value)) {
-      if (isMinecraftShape(token.value)) minecraft.push(token.value);
-      if (isMcaShape(token.value)) mca.push(token.value);
-    }
   }
 
   if (inferTitle) {
