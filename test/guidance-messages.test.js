@@ -17,7 +17,8 @@ test('main warning pings only the owner and contains dynamic guidance', () => {
   const text = JSON.stringify(payload);
   assert.match(text, /MCA Reborn version/);
   assert.match(text, /Minecraft: `1\.21\.1`/);
-  assert.match(text, /type `info`/i);
+  assert.match(text, /\/info/i);
+  assert.doesNotMatch(text, /type `info`/i);
   assert.match(text, /latest\.log/i);
   assert.match(text, /mclo\.gs/i);
   assert.doesNotMatch(text, /reply using this format/i);
