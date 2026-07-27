@@ -5,6 +5,7 @@ import {
   isModrinthCatalogueAvailable,
   supportsMinecraftVersion,
 } from '../modrinth/catalogue.js';
+import { findNewerCompatiblePrereleases } from '../modrinth/prereleases.js';
 import { hasMinecraftVersion } from '../minecraft/catalogue.js';
 
 function unique(values) {
@@ -52,6 +53,8 @@ function diagnosisFingerprint(diagnosis) {
     recommendation: diagnosis.recommendation?.status ?? null,
     recommendedVersion: diagnosis.recommendation?.entry?.mcaVersion ?? null,
     updateVersion: diagnosis.updateAvailable?.entry?.mcaVersion ?? null,
+    betaVersion: diagnosis.prereleases?.beta?.mcaVersion ?? null,
+    alphaVersion: diagnosis.prereleases?.alpha?.mcaVersion ?? null,
   });
 }
 
@@ -210,6 +213,13 @@ export function diagnoseVersions(result, catalogue = null, minecraftCatalogue = 
     });
   }
 
+  const prereleases = minecraft.eligible && minecraftField.status === 'present'
+    ? findNewerCompatiblePrereleases(catalogue, {
+      minecraftVersion: minecraftField.value,
+      loader: loaderField.status === 'present' ? loaderField.value : null,
+    })
+    : { beta: null, alpha: null };
+
   const detected = unique([
     ...(minecraft.eligible && minecraftField.status === 'present' ? [`Minecraft: \`${minecraftField.value}\``] : []),
     ...(mca.eligible && mcaField.status === 'present' ? [`MCA Reborn: \`${mcaField.value}\``] : []),
@@ -225,6 +235,7 @@ export function diagnoseVersions(result, catalogue = null, minecraftCatalogue = 
     compatibility,
     recommendation,
     updateAvailable,
+    prereleases,
     minecraftEligible: minecraft.eligible,
     mcaEligible: mca.eligible,
     minecraftValidity: minecraft.validity,
