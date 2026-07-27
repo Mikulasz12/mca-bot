@@ -71,6 +71,31 @@ function scanText(text, source, minecraft, mca, { allowBare = false } = {}) {
     }
   }
 }
+function fallbackSources(messages, { minecraft, mca }) {
+  const needMinecraft = minecraft.status === 'missing';
+  const needMca = mca.status === 'missing';
+  if (!needMinecraft && !needMca) return [];
+
+  return messages.flatMap((message, index) => {
+    if (message.authorKind !== 'thread-owner') return [];
+    const found = tokens(message.content);
+    const minecraftValues = needMinecraft ? found.filter((token) => isMinecraftShape(token.value)).map((token) => token.value) : [];
+    const mcaValues = needMca ? found.filter((token) => isMcaShape(token.value)).map((token) => token.value) : [];
+    if (minecraftValues.length === 0 && mcaValues.length === 0) return [];
+    return [{
+      source: message.position ?? `message-${index}`,
+      owner: true,
+      priority: index + 2,
+      minecraft: [...new Set(minecraftValues)],
+      mca: [...new Set(mcaValues)],
+      rejectedMca: [],
+      pairs: [],
+      loaders: [],
+      vague: [],
+      authoritativeMinecraft: false,
+    }];
+  });
+}
 export function detectThreadVersions({ tags = [], title = '', messages = [] } = {}) {
   const minecraft = makeField();
   const mca = makeField();
@@ -89,14 +114,22 @@ export function detectThreadVersions({ tags = [], title = '', messages = [] } = 
     const content = String(message.content ?? '');
     if (/\b(?:latest|newest|current)\b/i.test(content)) for (const match of content.matchAll(/\b(?:latest|newest|current)\b/gi)) vague.add(match[0].toLowerCase());
     scanText(content, source, minecraft, mca, { allowBare: message.authorKind === 'thread-owner' });
-    if (message.authorKind === 'thread-owner') {
-      for (const token of tokens(content)) {
-        if (isMinecraftShape(token.value)) add(minecraft, token.value, source, token.match, 'medium');
-        if (isMcaShape(token.value)) add(mca, token.value, source, token.match, 'medium');
-      }
-    }
     for (const attachment of message.attachments ?? []) scanCompoundFiles(attachment.name, `${source}-attachment`, minecraft, mca);
   }
+
+  const needRawMinecraft = minecraft.values.length === 0;
+  const needRawMca = mca.values.length === 0;
+  if (needRawMinecraft || needRawMca) {
+    for (const message of messages) {
+      if (message.authorKind !== 'thread-owner') continue;
+      const source = message.position ?? 'message';
+      for (const token of tokens(message.content)) {
+        if (needRawMinecraft && isMinecraftShape(token.value)) add(minecraft, token.value, source, token.match, 'medium');
+        if (needRawMca && isMcaShape(token.value)) add(mca, token.value, source, token.match, 'medium');
+      }
+    }
+  }
+
   const sources = [];
   let tagEvidence = extractVersionEvidence({ text: '', source: 'tags', priority: 0 });
   for (const tag of tags) {
@@ -130,6 +163,8 @@ export function detectThreadVersions({ tags = [], title = '', messages = [] } = 
     if (message.authorKind === 'thread-owner') sources.push(evidence);
   });
 
+  const initialResolved = resolveVersionEvidence(sources);
+  sources.push(...fallbackSources(messages, initialResolved));
   const resolved = resolveVersionEvidence(sources);
   return {
     minecraft: finalize(minecraft),
