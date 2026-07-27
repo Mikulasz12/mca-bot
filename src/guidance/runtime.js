@@ -4,7 +4,7 @@ function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function registerGuidanceEvents(client, { coordinator, infoHandler, adapter, Events, logger = console }) {
+export function registerGuidanceEvents(client, { coordinator, Events, logger = console }) {
   function run(label, operation) {
     Promise.resolve()
       .then(operation)
@@ -27,10 +27,7 @@ export function registerGuidanceEvents(client, { coordinator, infoHandler, adapt
   });
 
   client.on(Events.MessageCreate, (message) => {
-    run(`Failed to handle message ${message.id}`, async () => {
-      await infoHandler.handle(message, adapter);
-      await coordinator.onOwnerMessage(message);
-    });
+    run(`Failed to handle message ${message.id}`, () => coordinator.onOwnerMessage(message));
   });
 
   client.on(Events.MessageUpdate, (_oldMessage, newMessage) => {
