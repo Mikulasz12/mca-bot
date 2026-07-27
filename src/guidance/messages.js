@@ -129,15 +129,22 @@ export function buildUpdateAdvisory({ ownerId, diagnosis, messageId }) {
   const update = diagnosis.updateAvailable;
   if (!update?.entry) throw new TypeError('An update recommendation is required');
   const loaders = update.loaders?.length ? ` for ${update.loaders.join(', ')}` : '';
+  const prereleaseOnly = update.status === 'prerelease';
+  const description = prereleaseOnly
+    ? `Your MCA Reborn version \`${diagnosis.mcaVersion}\` is valid. A newer experimental prerelease, **${update.entry.mcaVersion}**, is available for Minecraft \`${diagnosis.minecraftVersion}\`${loaders}. Prereleases are optional and may be less stable than the public release.`
+    : `Your MCA Reborn version \`${diagnosis.mcaVersion}\` is valid, but **${update.entry.mcaVersion}** is the newest compatible public release for Minecraft \`${diagnosis.minecraftVersion}\`${loaders}. Updating is optional, but it may include fixes already made after your installed version.`;
+  const fields = prereleaseOnly
+    ? prereleaseFields(diagnosis)
+    : [{ name: 'Download', value: update.entry.url }, ...prereleaseFields(diagnosis)];
   return {
     content: `<@${ownerId}>`,
     allowedMentions: ownerMentions(ownerId),
     reply: replyTo(messageId),
     embeds: [{
       color: INFO_COLOR,
-      title: 'MCA Reborn update available',
-      description: `Your MCA Reborn version \`${diagnosis.mcaVersion}\` is valid, but **${update.entry.mcaVersion}** is the newest compatible public release for Minecraft \`${diagnosis.minecraftVersion}\`${loaders}. Updating is optional, but it may include fixes already made after your installed version.`,
-      fields: [{ name: 'Download', value: update.entry.url }, ...prereleaseFields(diagnosis)],
+      title: prereleaseOnly ? 'MCA Reborn prerelease available' : 'MCA Reborn update available',
+      description,
+      fields,
     }],
   };
 }
