@@ -4,7 +4,6 @@ import {
   GatewayIntentBits,
   MessageFlags,
   Partials,
-  PermissionsBitField,
 } from 'discord.js';
 
 import { loadConfig } from './config.js';
@@ -12,11 +11,11 @@ import { cacheCommandData } from './discord/cache-command.js';
 import { createCacheInteractionHandler } from './discord/cache-handler.js';
 import { scanCommandData } from './discord/command.js';
 import { createInteractionHandler } from './discord/handler.js';
+import { infoCommandData, uptimeCommandData, handlePublicCommand } from './discord/public-commands.js';
 import { createScanAdapter } from './discord/scan-adapter.js';
 import { createAtomicJsonlWriter } from './export/jsonl-writer.js';
 import { createGuidanceCoordinator } from './guidance/coordinator.js';
 import { createGuidanceDiscordAdapter } from './guidance/discord-adapter.js';
-import { createInfoHandler } from './guidance/info-handler.js';
 import { registerGuidanceEvents } from './guidance/runtime.js';
 import { createThreadReader } from './guidance/thread-reader.js';
 import { createMinecraftManifestClient } from './minecraft/client.js';
@@ -68,29 +67,27 @@ const guidanceCoordinator = createGuidanceCoordinator({
   catalogueService,
   minecraftService,
 });
-const infoHandler = createInfoHandler({
-  forumChannelIds: config.forumChannelIds,
-  canManageMessages: (message) =>
-    message.member?.permissions?.has(PermissionsBitField.Flags.ManageMessages) ?? false,
-});
 registerGuidanceEvents(client, {
   coordinator: guidanceCoordinator,
-  infoHandler,
-  adapter: guidanceAdapter,
   Events,
 });
 
 client.once(Events.ClientReady, async (readyClient) => {
-  await readyClient.application.commands.set([scanCommandData.toJSON()]);
+  await readyClient.application.commands.set([
+    scanCommandData.toJSON(),
+    infoCommandData.toJSON(),
+    uptimeCommandData.toJSON(),
+  ]);
   await readyClient.application.commands.set([cacheCommandData.toJSON()], config.allowedGuildId);
   console.log(
-    `Ready as ${readyClient.user.tag}; /scan export registered globally and /cache registered in guild ${config.allowedGuildId}.`,
+    `Ready as ${readyClient.user.tag}; /scan, /info, and /uptime registered globally and /cache registered in guild ${config.allowedGuildId}.`,
   );
 });
 
 client.on(Events.InteractionCreate, (interaction) => {
   Promise.resolve()
     .then(async () => {
+      if (await handlePublicCommand(interaction)) return;
       if (await handleCacheInteraction(interaction)) return;
       await handleScanInteraction(interaction);
     })
