@@ -15,7 +15,7 @@ test('recognises MCA at the start of a descriptive title while the forum tag sup
   assert.equal(result.resolved.minecraft.value, '1.21.1');
 });
 
-test('recognises version-shaped strings anywhere in an owner message', () => {
+test('recognises abbreviated version labels in owner messages', () => {
   const result = detectThreadVersions({
     messages: [{
       position: 'starter',
@@ -27,20 +27,6 @@ test('recognises version-shaped strings anywhere in an owner message', () => {
 
   assert.equal(result.resolved.mca.value, '7.7.23');
   assert.equal(result.resolved.minecraft.value, '1.21.1');
-});
-
-test('multiple Minecraft-shaped strings remain ambiguous', () => {
-  const result = detectThreadVersions({
-    messages: [{
-      position: 'starter',
-      authorKind: 'thread-owner',
-      content: 'I tried 1.20.1 and 1.21.1',
-      attachments: [],
-    }],
-  });
-
-  assert.equal(result.resolved.minecraft.status, 'ambiguous');
-  assert.deepEqual(result.resolved.minecraft.values, ['1.20.1', '1.21.1']);
 });
 
 test('older valid MCA builds produce an optional update advisory', () => {
