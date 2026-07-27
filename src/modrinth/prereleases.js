@@ -4,7 +4,11 @@ function latest(entries) {
   ), null);
 }
 
-export function findNewerCompatiblePrereleases(catalogue, { minecraftVersion, loader = null } = {}) {
+export function findNewerCompatiblePrereleases(catalogue, {
+  minecraftVersion,
+  loader = null,
+  mcaVersion = null,
+} = {}) {
   const entries = catalogue?.entries ?? [];
   if (!minecraftVersion || entries.length === 0) return { beta: null, alpha: null };
 
@@ -12,10 +16,20 @@ export function findNewerCompatiblePrereleases(catalogue, { minecraftVersion, lo
     entry.minecraftVersions.includes(minecraftVersion) && (!loader || entry.loaders.includes(loader))
   );
   const stable = latest(compatible.filter((entry) => entry.versionType === 'r'));
-  const stablePublishedAt = stable?.publishedAt ?? -Infinity;
+  const installed = mcaVersion
+    ? latest(compatible.filter((entry) => entry.mcaVersion === mcaVersion))
+    : null;
+  const baselinePublishedAt = Math.max(
+    stable?.publishedAt ?? -Infinity,
+    installed?.publishedAt ?? -Infinity,
+  );
 
   const newest = (type) => latest(
-    compatible.filter((entry) => entry.versionType === type && entry.publishedAt > stablePublishedAt),
+    compatible.filter((entry) =>
+      entry.versionType === type &&
+      entry.mcaVersion !== mcaVersion &&
+      entry.publishedAt > baselinePublishedAt
+    ),
   );
 
   return {
