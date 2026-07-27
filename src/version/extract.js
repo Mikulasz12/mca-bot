@@ -164,6 +164,13 @@ export function extractVersionEvidence({
     if (version && isMcaShape(version)) mca.push(version);
   }
 
+  if (owner) {
+    for (const token of tokens(value)) {
+      if (isMinecraftShape(token.value)) minecraft.push(token.value);
+      if (isMcaShape(token.value)) mca.push(token.value);
+    }
+  }
+
   if (inferTitle) {
     const bareTitle = value.match(BARE_VERSION);
     const bareTitleVersion = bareTitle ? normaliseVersion(bareTitle[1]) : null;
@@ -171,7 +178,6 @@ export function extractVersionEvidence({
 
     for (const token of tokens(value)) {
       if (isMinecraftShape(token.value)) minecraft.push(token.value);
-      // Support forum titles commonly start with the MCA version followed by a short issue summary.
       if (isMcaShape(token.value)) mca.push(token.value);
     }
   }
