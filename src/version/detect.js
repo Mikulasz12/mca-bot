@@ -48,10 +48,10 @@ function scanLabelSegments(line, pattern, callback) {
   for (const match of line.matchAll(pattern)) callback(tokens(segmentAfter(line, (match.index ?? 0) + match[0].length)));
 }
 function scanLine(line, source, minecraft, mca) {
-  scanLabelSegments(line, /(?:minecraft\s+version\s*[:=-]?\s*|minecraft\s*[:=-]\s*|\bmc\s*[:=-]\s*|for\s+minecraft(?:\s+version)?\s+|for\s+version\s+|(?:version\s+)?(?:fabric|forge|neoforge|quilt)\s+)/gi, (lineTokens) => {
+  scanLabelSegments(line, /(?:minecraft\s+(?:version|ver\.?|v\.?)\s*[:=-]?\s*|minecraft\s*[:=-]\s*|\bmc\s*[:=-]\s*|for\s+minecraft(?:\s+version)?\s+|for\s+version\s+|(?:version\s+)?(?:fabric|forge|neoforge|quilt)\s+)/gi, (lineTokens) => {
     for (const token of lineTokens) if (isMinecraftShape(token.value)) add(minecraft, token.value, source, token.match);
   });
-  scanLabelSegments(line, /(?:(?<![a-z])mca(?:\s+reborn)?\s+version\s*[:=-]?\s*|(?<![a-z])mca\s*[:=-]\s*|(?<![a-z])mca(?:\s+reborn)?\s+(?=\d)|\bmod\s+version\s*[:=-]?\s*)/gi, (lineTokens) => {
+  scanLabelSegments(line, /(?:(?<![a-z])mca(?:\s+reborn)?\s+(?:version|ver\.?|v\.?)\s*[:=-]?\s*|(?<![a-z])mca\s*[:=-]\s*|(?<![a-z])mca(?:\s+reborn)?\s+(?=\d)|\bmod\s+(?:version|ver\.?|v\.?)\s*[:=-]?\s*)/gi, (lineTokens) => {
     for (const token of lineTokens) {
       if (isMcaShape(token.value)) add(mca, token.value, source, token.match);
       else if (isMinecraftShape(token.value)) { add(minecraft, token.value, source, token.match, 'medium'); reject(mca, token.value, source, token.match, 'looks-like-minecraft-version'); }
@@ -89,12 +89,6 @@ export function detectThreadVersions({ tags = [], title = '', messages = [] } = 
     const content = String(message.content ?? '');
     if (/\b(?:latest|newest|current)\b/i.test(content)) for (const match of content.matchAll(/\b(?:latest|newest|current)\b/gi)) vague.add(match[0].toLowerCase());
     scanText(content, source, minecraft, mca, { allowBare: message.authorKind === 'thread-owner' });
-    if (message.authorKind === 'thread-owner') {
-      for (const token of tokens(content)) {
-        if (isMinecraftShape(token.value)) add(minecraft, token.value, source, token.match, 'medium');
-        if (isMcaShape(token.value)) add(mca, token.value, source, token.match, 'medium');
-      }
-    }
     for (const attachment of message.attachments ?? []) scanCompoundFiles(attachment.name, `${source}-attachment`, minecraft, mca);
   }
   const sources = [];
