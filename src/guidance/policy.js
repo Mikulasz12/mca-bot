@@ -217,8 +217,20 @@ export function diagnoseVersions(result, catalogue = null, minecraftCatalogue = 
     ? findNewerCompatiblePrereleases(catalogue, {
       minecraftVersion: minecraftField.value,
       loader: loaderField.status === 'present' ? loaderField.value : null,
+      mcaVersion: mcaField.status === 'present' ? mcaField.value : null,
     })
     : { beta: null, alpha: null };
+
+  if (!updateAvailable && complete) {
+    const entry = prereleases.beta ?? prereleases.alpha;
+    if (entry) {
+      updateAvailable = {
+        status: 'prerelease',
+        entry,
+        loaders: loaderField.status === 'present' ? [loaderField.value] : entry.loaders,
+      };
+    }
+  }
 
   const detected = unique([
     ...(minecraft.eligible && minecraftField.status === 'present' ? [`Minecraft: \`${minecraftField.value}\``] : []),
