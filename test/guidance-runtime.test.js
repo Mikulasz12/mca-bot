@@ -11,7 +11,7 @@ const Events = {
   MessageDelete: 'messageDelete',
 };
 
-function setup({ infoError = null } = {}) {
+function setup({ ownerMessageError = null } = {}) {
   const handlers = new Map();
   const calls = [];
   const errors = [];
@@ -20,15 +20,13 @@ function setup({ infoError = null } = {}) {
     async start(thread) { calls.push(['start', thread.id]); },
     async onThreadUpdate(oldThread, newThread) { calls.push(['update', oldThread.id, newThread.id]); },
     async onThreadDelete(thread) { calls.push(['delete', thread.id]); },
-    async onOwnerMessage(message) { calls.push(['owner-message', message.id]); },
+    async onOwnerMessage(message) {
+      if (ownerMessageError) throw ownerMessageError;
+      calls.push(['owner-message', message.id]);
+    },
     async onOwnerEvidenceChanged(message) { calls.push(['evidence', message.id]); },
   };
-  const infoHandler = { async handle(message, adapter) {
-    if (infoError) throw infoError;
-    calls.push(['info', message.id, adapter.name]);
-  } };
-  const adapter = { name: 'adapter' };
-  registerGuidanceEvents(client, { coordinator, infoHandler, adapter, Events, logger: { error(message) { errors.push(message); } } });
+  registerGuidanceEvents(client, { coordinator, Events, logger: { error(message) { errors.push(message); } } });
   return { handlers, calls, errors };
 }
 
@@ -53,11 +51,11 @@ test('routes updates and deletion', async () => {
   assert.deepEqual(h.calls, [['update', 'old', 'new'], ['delete', 'gone']]);
 });
 
-test('offers messages to info handler and completion coordinator', async () => {
+test('routes new messages to the completion coordinator', async () => {
   const h = setup();
   h.handlers.get(Events.MessageCreate)({ id: 'message-1' });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(h.calls, [['info', 'message-1', 'adapter'], ['owner-message', 'message-1']]);
+  assert.deepEqual(h.calls, [['owner-message', 'message-1']]);
 });
 
 test('routes message edits and deletions to evidence rechecks', async () => {
@@ -69,14 +67,14 @@ test('routes message edits and deletions to evidence rechecks', async () => {
 });
 
 test('does not log expected deleted-thread races', async () => {
-  const h = setup({ infoError: Object.assign(new Error('Unknown Channel'), { code: 10003 }) });
+  const h = setup({ ownerMessageError: Object.assign(new Error('Unknown Channel'), { code: 10003 }) });
   h.handlers.get(Events.MessageCreate)({ id: 'message-gone' });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(h.errors, []);
 });
 
 test('continues logging unexpected runtime failures', async () => {
-  const h = setup({ infoError: new Error('Missing Access') });
+  const h = setup({ ownerMessageError: new Error('Missing Access') });
   h.handlers.get(Events.MessageCreate)({ id: 'message-failed' });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.errors.length, 1);
