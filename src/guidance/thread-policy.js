@@ -4,10 +4,6 @@ export const EXCLUDED_GUIDANCE_TAG_NAMES = Object.freeze([
   'Translation Help',
 ]);
 
-const EXCLUDED_GUIDANCE_TAG_KEYS = new Set(
-  EXCLUDED_GUIDANCE_TAG_NAMES.map((name) => normaliseForumTagName(name)),
-);
-
 export function normaliseForumTagName(name) {
   return String(name ?? '').trim().toLowerCase();
 }
@@ -22,8 +18,7 @@ export function appliedForumTags(thread) {
   }));
 }
 
-export function hasExcludedGuidanceTag(thread) {
-  return appliedForumTags(thread).some(({ name }) =>
-    EXCLUDED_GUIDANCE_TAG_KEYS.has(normaliseForumTagName(name)),
-  );
+export function hasExcludedGuidanceTag(thread, excludedTagNames = EXCLUDED_GUIDANCE_TAG_NAMES) {
+  const excluded = new Set(excludedTagNames.map((name) => normaliseForumTagName(name)));
+  return appliedForumTags(thread).some(({ name }) => excluded.has(normaliseForumTagName(name)));
 }
