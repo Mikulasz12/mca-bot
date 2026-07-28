@@ -39,13 +39,17 @@ async function fetchStarterWithRetry(thread, sleep) {
   throw lastError;
 }
 
-export function createThreadReader({ forumChannelIds, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+export function createThreadReader({
+  forumChannelIds,
+  configService = { get: () => ({ excludedTagNames: [] }) },
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
   const configured = new Set(forumChannelIds.map(String));
 
   return {
     async read(thread) {
       if (!configured.has(String(thread.parentId))) return null;
-      if (hasExcludedGuidanceTag(thread)) return null;
+      if (hasExcludedGuidanceTag(thread, configService.get().excludedTagNames)) return null;
 
       const starter = await fetchStarterWithRetry(thread, sleep);
       const fetched = await thread.messages.fetch({ limit: 100 });
