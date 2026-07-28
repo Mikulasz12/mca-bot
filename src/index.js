@@ -9,6 +9,7 @@ import {
 import { loadConfig } from './config.js';
 import { cacheCommandData } from './discord/cache-command.js';
 import { createCacheInteractionHandler } from './discord/cache-handler.js';
+import { configCommandData, createConfigInteractionHandler } from './discord/config-command.js';
 import { scanCommandData } from './discord/command.js';
 import { createInteractionHandler } from './discord/handler.js';
 import { infoCommandData, uptimeCommandData, handlePublicCommand } from './discord/public-commands.js';
@@ -22,6 +23,7 @@ import { createMinecraftManifestClient } from './minecraft/client.js';
 import { createMinecraftVersionService } from './minecraft/service.js';
 import { createModrinthClient } from './modrinth/client.js';
 import { createCatalogueService } from './modrinth/service.js';
+import { createRuntimeConfigService } from './runtime-config.js';
 
 try {
   process.loadEnvFile('.env');
@@ -30,9 +32,10 @@ try {
 }
 
 const config = loadConfig(process.env);
+const runtimeConfigService = createRuntimeConfigService();
 const catalogueService = createCatalogueService({ client: createModrinthClient() });
 const minecraftService = createMinecraftVersionService({ client: createMinecraftManifestClient() });
-await Promise.all([catalogueService.start(), minecraftService.start()]);
+await Promise.all([runtimeConfigService.start(), catalogueService.start(), minecraftService.start()]);
 await Promise.all([
   catalogueService.status().available ? null : catalogueService.refresh({ reason: 'startup-required' }),
   minecraftService.status().available ? null : minecraftService.refresh({ reason: 'startup-required' }),
@@ -58,14 +61,22 @@ const handleCacheInteraction = createCacheInteractionHandler({
   catalogueService,
   minecraftService,
 });
+const handleConfigInteraction = createConfigInteractionHandler({
+  configService: runtimeConfigService,
+  allowedGuildId: config.allowedGuildId,
+});
 
 const guidanceAdapter = createGuidanceDiscordAdapter(client);
-const threadReader = createThreadReader({ forumChannelIds: config.forumChannelIds });
+const threadReader = createThreadReader({
+  forumChannelIds: config.forumChannelIds,
+  configService: runtimeConfigService,
+});
 const guidanceCoordinator = createGuidanceCoordinator({
   reader: threadReader,
   adapter: guidanceAdapter,
   catalogueService,
   minecraftService,
+  configService: runtimeConfigService,
 });
 registerGuidanceEvents(client, {
   coordinator: guidanceCoordinator,
@@ -80,9 +91,10 @@ client.once(Events.ClientReady, async (readyClient) => {
   ]);
   await readyClient.application.commands.set([
     cacheCommandData.toJSON(),
+    configCommandData.toJSON(),
   ], config.allowedGuildId);
   console.log(
-    `Ready as ${readyClient.user.tag}; /scan, /info, and /uptime registered globally and /cache registered in guild ${config.allowedGuildId}.`,
+    `Ready as ${readyClient.user.tag}; /scan, /info, and /uptime registered globally and /cache plus /config registered in guild ${config.allowedGuildId}.`,
   );
 });
 
@@ -90,6 +102,7 @@ client.on(Events.InteractionCreate, (interaction) => {
   Promise.resolve()
     .then(async () => {
       if (await handlePublicCommand(interaction)) return;
+      if (await handleConfigInteraction(interaction)) return;
       if (await handleCacheInteraction(interaction)) return;
       await handleScanInteraction(interaction);
     })
