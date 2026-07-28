@@ -61,11 +61,41 @@ export function createGuidanceCoordinator({
     }, retryCadence);
   }
 
+  async function refreshVisibleReminder(state, retryCount) {
+    if (!state.responseId || state.responseKind !== 'reminder' || !state.lastDiagnosis) return;
+    if (state.reminderCount > retryCount || retryCount === 0) {
+      await safeDelete(state.threadId, state.responseId);
+      state.responseId = null;
+      state.responseKind = null;
+      return;
+    }
+    try {
+      await adapter.editMessage(
+        state.threadId,
+        state.responseId,
+        buildReminder({
+          ownerId: state.ownerId,
+          diagnosis: state.lastDiagnosis,
+          starterId: state.starterId,
+          reminderNumber: state.reminderCount,
+          retryCount,
+        }),
+      );
+    } catch (error) {
+      if (!isMissingDiscordResource(error)) logger.error(`Failed to refresh reminder ${state.responseId}: ${errorText(error)}`);
+    }
+  }
+
   if (typeof configService.subscribe === 'function') {
     unsubscribeConfig = configService.subscribe((next, previous) => {
       if (closed) return;
-      if (next.retryCadence === previous.retryCadence && next.retryCount === previous.retryCount) return;
-      for (const state of active.values()) schedule(state);
+      const cadenceChanged = next.retryCadence !== previous.retryCadence;
+      const countChanged = next.retryCount !== previous.retryCount;
+      if (!cadenceChanged && !countChanged) return;
+      for (const state of active.values()) {
+        schedule(state);
+        if (countChanged) void refreshVisibleReminder(state, next.retryCount);
+      }
     });
   }
 
@@ -105,11 +135,13 @@ export function createGuidanceCoordinator({
     }
   }
 
-  async function replaceResponse(state, operation) {
+  async function replaceResponse(state, operation, kind = null) {
     if (state.responseId) await safeDelete(state.threadId, state.responseId);
     state.responseId = null;
+    state.responseKind = null;
     const message = await operation();
     state.responseId = message.id;
+    state.responseKind = kind;
   }
 
   function hasReleaseNotice(diagnosis) {
@@ -155,6 +187,7 @@ export function createGuidanceCoordinator({
     state.ownerId = snapshot.ownerId;
     state.starterId = snapshot.starterId;
     const diagnosis = diagnose(snapshot);
+    state.lastDiagnosis = diagnosis;
     if (diagnosis.complete) {
       await removeState(state);
       await sendUpdateAdvisory(state.thread, snapshot, diagnosis, messageId ?? snapshot.starterId);
@@ -181,7 +214,7 @@ export function createGuidanceCoordinator({
               messageId,
               invalidAttemptCount: state.invalidAttemptCount,
             }),
-          ));
+          ), 'progress');
         } catch (error) {
           if (isMissingDiscordResource(error)) {
             await removeState(state, { cleanup: false });
@@ -192,6 +225,7 @@ export function createGuidanceCoordinator({
       } else if (state.responseId) {
         await safeDelete(state.threadId, state.responseId);
         state.responseId = null;
+        state.responseKind = null;
       }
       schedule(state);
       return;
@@ -218,7 +252,7 @@ export function createGuidanceCoordinator({
           reminderNumber,
           retryCount,
         }),
-      ));
+      ), 'reminder');
       state.reminderCount = reminderNumber;
     } catch (error) {
       if (isMissingDiscordResource(error)) await removeState(state, { cleanup: false });
@@ -274,8 +308,10 @@ export function createGuidanceCoordinator({
         starterId: snapshot.starterId,
         warningId: warning.id,
         responseId: null,
+        responseKind: null,
         reminderCount: 0,
         invalidAttemptCount: 0,
+        lastDiagnosis: diagnosis,
         lastDiagnosisFingerprint: diagnosis.fingerprint,
         catalogueRevision: catalogueService.revision(),
         minecraftRevision: minecraftService.revision(),
