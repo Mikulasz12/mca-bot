@@ -21,6 +21,7 @@ export function createGuidanceCoordinator({
 }) {
   const active = new Map();
   let closed = false;
+  let unsubscribeConfig = null;
   const runtime = () => ({ ...DEFAULT_RUNTIME, ...(configService.get?.() ?? {}) });
 
   async function safeDelete(threadId, messageId) {
@@ -58,6 +59,14 @@ export function createGuidanceCoordinator({
       current.timer = null;
       await check(state.threadId, { mode: 'reminder', generation });
     }, retryCadence);
+  }
+
+  if (typeof configService.subscribe === 'function') {
+    unsubscribeConfig = configService.subscribe((next, previous) => {
+      if (closed) return;
+      if (next.retryCadence === previous.retryCadence && next.retryCount === previous.retryCount) return;
+      for (const state of active.values()) schedule(state);
+    });
   }
 
   function diagnose(snapshot) {
@@ -202,7 +211,13 @@ export function createGuidanceCoordinator({
       await replaceResponse(state, () => adapter.sendReminder(
         state.thread,
         snapshot,
-        buildReminder({ ownerId: snapshot.ownerId, diagnosis, starterId: snapshot.starterId, reminderNumber }),
+        buildReminder({
+          ownerId: snapshot.ownerId,
+          diagnosis,
+          starterId: snapshot.starterId,
+          reminderNumber,
+          retryCount,
+        }),
       ));
       state.reminderCount = reminderNumber;
     } catch (error) {
@@ -306,6 +321,8 @@ export function createGuidanceCoordinator({
     shutdown() {
       if (closed) return;
       closed = true;
+      unsubscribeConfig?.();
+      unsubscribeConfig = null;
       for (const state of active.values()) invalidateTimer(state);
       active.clear();
     },
