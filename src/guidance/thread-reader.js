@@ -1,5 +1,5 @@
 import { isUnknownChannel } from './discord-errors.js';
-import { appliedForumTags, hasExcludedGuidanceTag } from './thread-policy.js';
+import { appliedForumTags, EXCLUDED_GUIDANCE_TAG_NAMES, hasExcludedGuidanceTag } from './thread-policy.js';
 
 const STARTER_RETRY_DELAYS = [250, 750];
 
@@ -41,7 +41,7 @@ async function fetchStarterWithRetry(thread, sleep) {
 
 export function createThreadReader({
   forumChannelIds,
-  configService = { get: () => ({ excludedTagNames: [] }) },
+  configService = { get: () => ({ excludedTagNames: EXCLUDED_GUIDANCE_TAG_NAMES }) },
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
   const configured = new Set(forumChannelIds.map(String));
