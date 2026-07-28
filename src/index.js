@@ -73,20 +73,16 @@ registerGuidanceEvents(client, {
 });
 
 client.once(Events.ClientReady, async (readyClient) => {
-  const infoCommand = infoCommandData.toJSON();
-  const uptimeCommand = uptimeCommandData.toJSON();
   await readyClient.application.commands.set([
     scanCommandData.toJSON(),
-    infoCommand,
-    uptimeCommand,
+    infoCommandData.toJSON(),
+    uptimeCommandData.toJSON(),
   ]);
   await readyClient.application.commands.set([
     cacheCommandData.toJSON(),
-    infoCommand,
-    uptimeCommand,
   ], config.allowedGuildId);
   console.log(
-    `Ready as ${readyClient.user.tag}; /scan, /info, and /uptime registered globally; /cache, /info, and /uptime registered immediately in guild ${config.allowedGuildId}.`,
+    `Ready as ${readyClient.user.tag}; /scan, /info, and /uptime registered globally and /cache registered in guild ${config.allowedGuildId}.`,
   );
 });
 
