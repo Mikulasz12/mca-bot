@@ -149,10 +149,10 @@ export function buildUpdateAdvisory({ ownerId, diagnosis, messageId }) {
   };
 }
 
-export function buildReminder({ ownerId, diagnosis, starterId, reminderNumber }) {
+export function buildReminder({ ownerId, diagnosis, starterId, reminderNumber, retryCount = 2 }) {
   const needed = diagnosis.missing.length > 0 ? diagnosis.missing.join(' and ') : 'the exact version information';
   return {
-    content: `<@${ownerId}> Reminder ${reminderNumber}/2: we still need ${needed} before this can be investigated.`,
+    content: `<@${ownerId}> Reminder ${reminderNumber}/${retryCount}: we still need ${needed} before this can be investigated.`,
     allowedMentions: ownerMentions(ownerId),
     reply: replyTo(starterId),
   };
