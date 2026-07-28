@@ -7,27 +7,28 @@ function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+const DEFAULT_RUNTIME = Object.freeze({ retryCadence: 45_000, retryCount: 2 });
+
 export function createGuidanceCoordinator({
   reader,
   adapter,
   catalogueService = { catalogue: () => [], revision: () => 0 },
   minecraftService = { catalogue: () => [], revision: () => 0 },
+  configService = { get: () => DEFAULT_RUNTIME },
   setTimer = setTimeout,
   clearTimer = clearTimeout,
-  reminderDelayMs = 45_000,
   logger = console,
 }) {
   const active = new Map();
   let closed = false;
+  const runtime = () => ({ ...DEFAULT_RUNTIME, ...(configService.get?.() ?? {}) });
 
   async function safeDelete(threadId, messageId) {
     if (!messageId || closed) return;
     try {
       await adapter.deleteMessage(threadId, messageId);
     } catch (error) {
-      if (!isMissingDiscordResource(error)) {
-        logger.error(`Failed to delete guidance message ${messageId}: ${errorText(error)}`);
-      }
+      if (!isMissingDiscordResource(error)) logger.error(`Failed to delete guidance message ${messageId}: ${errorText(error)}`);
     }
   }
 
@@ -48,14 +49,15 @@ export function createGuidanceCoordinator({
 
   function schedule(state) {
     invalidateTimer(state);
-    if (closed || state.reminderCount >= 2) return;
+    const { retryCadence, retryCount } = runtime();
+    if (closed || state.reminderCount >= retryCount) return;
     const generation = state.timerGeneration;
     state.timer = setTimer(async () => {
       const current = active.get(state.threadId);
       if (!current || current.timerGeneration !== generation) return;
       current.timer = null;
       await check(state.threadId, { mode: 'reminder', generation });
-    }, reminderDelayMs);
+    }, retryCadence);
   }
 
   function diagnose(snapshot) {
@@ -68,11 +70,7 @@ export function createGuidanceCoordinator({
 
   async function updateMain(state, snapshot, diagnosis) {
     if (closed) return false;
-    const payload = buildMainWarning({
-      ownerId: snapshot.ownerId,
-      diagnosis,
-      starterId: snapshot.starterId,
-    });
+    const payload = buildMainWarning({ ownerId: snapshot.ownerId, diagnosis, starterId: snapshot.starterId });
     try {
       await adapter.editMessage(state.threadId, state.warningId, payload);
       return true;
@@ -82,9 +80,7 @@ export function createGuidanceCoordinator({
         await removeState(state, { cleanup: false });
         return false;
       }
-      if (!isUnknownMessage(error)) {
-        logger.error(`Failed to edit guidance message ${state.warningId}: ${errorText(error)}`);
-      }
+      if (!isUnknownMessage(error)) logger.error(`Failed to edit guidance message ${state.warningId}: ${errorText(error)}`);
       await safeDelete(state.threadId, state.warningId);
       try {
         const replacement = await adapter.sendMain(state.thread, snapshot, payload);
@@ -101,16 +97,18 @@ export function createGuidanceCoordinator({
   }
 
   async function replaceResponse(state, operation) {
-    if (state.responseId) {
-      await safeDelete(state.threadId, state.responseId);
-      state.responseId = null;
-    }
+    if (state.responseId) await safeDelete(state.threadId, state.responseId);
+    state.responseId = null;
     const message = await operation();
     state.responseId = message.id;
   }
 
+  function hasReleaseNotice(diagnosis) {
+    return Boolean(diagnosis.updateAvailable || diagnosis.prereleases?.beta || diagnosis.prereleases?.alpha);
+  }
+
   async function sendUpdateAdvisory(thread, snapshot, diagnosis, messageId) {
-    if (closed || !diagnosis.updateAvailable) return;
+    if (closed || !hasReleaseNotice(diagnosis)) return;
     try {
       await adapter.sendResponse(
         thread,
@@ -118,9 +116,7 @@ export function createGuidanceCoordinator({
         buildUpdateAdvisory({ ownerId: snapshot.ownerId, diagnosis, messageId }),
       );
     } catch (error) {
-      if (!isMissingDiscordResource(error)) {
-        logger.error(`Failed to send MCA update advisory in thread ${thread.id}: ${errorText(error)}`);
-      }
+      if (!isMissingDiscordResource(error)) logger.error(`Failed to send MCA update advisory in thread ${thread.id}: ${errorText(error)}`);
     }
   }
 
@@ -132,9 +128,8 @@ export function createGuidanceCoordinator({
     try {
       snapshot = await reader.read(state.thread);
     } catch (error) {
-      if (closed || isMissingDiscordResource(error)) {
-        await removeState(state, { cleanup: false });
-      } else {
+      if (closed || isMissingDiscordResource(error)) await removeState(state, { cleanup: false });
+      else {
         logger.error(`Failed to read thread ${state.threadId}: ${errorText(error)}`);
         await removeState(state);
       }
@@ -158,7 +153,6 @@ export function createGuidanceCoordinator({
     }
 
     const changed = diagnosis.fingerprint !== state.lastDiagnosisFingerprint;
-
     if (mode === 'owner' || mode === 'evidence') {
       if (!changed) return;
       state.lastDiagnosisFingerprint = diagnosis.fingerprint;
@@ -190,8 +184,7 @@ export function createGuidanceCoordinator({
         await safeDelete(state.threadId, state.responseId);
         state.responseId = null;
       }
-
-      if (state.reminderCount < 2) schedule(state);
+      schedule(state);
       return;
     }
 
@@ -202,30 +195,22 @@ export function createGuidanceCoordinator({
       if (!await updateMain(state, snapshot, diagnosis)) return;
     }
 
-    if (state.reminderCount >= 2) return;
+    const { retryCount } = runtime();
+    if (state.reminderCount >= retryCount) return;
     const reminderNumber = state.reminderCount + 1;
     try {
       await replaceResponse(state, () => adapter.sendReminder(
         state.thread,
         snapshot,
-        buildReminder({
-          ownerId: snapshot.ownerId,
-          diagnosis,
-          starterId: snapshot.starterId,
-          reminderNumber,
-        }),
+        buildReminder({ ownerId: snapshot.ownerId, diagnosis, starterId: snapshot.starterId, reminderNumber }),
       ));
       state.reminderCount = reminderNumber;
     } catch (error) {
-      if (isMissingDiscordResource(error)) {
-        await removeState(state, { cleanup: false });
-      } else {
-        logger.error(`Failed to send reminder in thread ${state.threadId}: ${errorText(error)}`);
-      }
+      if (isMissingDiscordResource(error)) await removeState(state, { cleanup: false });
+      else logger.error(`Failed to send reminder in thread ${state.threadId}: ${errorText(error)}`);
       return;
     }
-
-    if (state.reminderCount < 2) schedule(state);
+    schedule(state);
   }
 
   async function check(threadId, options) {
@@ -233,27 +218,22 @@ export function createGuidanceCoordinator({
     const state = active.get(threadId);
     if (!state) return;
     if (state.checking) return state.checking;
-    state.checking = performCheck(state, options).finally(() => {
-      state.checking = null;
-    });
+    state.checking = performCheck(state, options).finally(() => { state.checking = null; });
     return state.checking;
   }
 
   return {
     async start(thread) {
       if (closed || active.has(thread.id)) return false;
-
       let snapshot;
       try {
         snapshot = await reader.read(thread);
       } catch (error) {
-        if (!closed && !isMissingDiscordResource(error)) {
-          logger.error(`Failed to inspect new thread ${thread.id}: ${errorText(error)}`);
-        }
+        if (!closed && !isMissingDiscordResource(error)) logger.error(`Failed to inspect new thread ${thread.id}: ${errorText(error)}`);
         return false;
       }
-
       if (closed || !snapshot || snapshot.archived || snapshot.locked) return false;
+
       const diagnosis = diagnose(snapshot);
       if (diagnosis.complete) {
         await sendUpdateAdvisory(thread, snapshot, diagnosis, snapshot.starterId);
@@ -268,9 +248,7 @@ export function createGuidanceCoordinator({
           buildMainWarning({ ownerId: snapshot.ownerId, diagnosis, starterId: snapshot.starterId }),
         );
       } catch (error) {
-        if (!closed && !isMissingDiscordResource(error)) {
-          logger.error(`Failed to send guidance in thread ${thread.id}: ${errorText(error)}`);
-        }
+        if (!closed && !isMissingDiscordResource(error)) logger.error(`Failed to send guidance in thread ${thread.id}: ${errorText(error)}`);
         return false;
       }
 
@@ -303,8 +281,7 @@ export function createGuidanceCoordinator({
 
     async onOwnerEvidenceChanged(message) {
       const state = active.get(message.channelId);
-      if (!state) return;
-      if (message.author?.id && message.author.id !== state.ownerId) return;
+      if (!state || (message.author?.id && message.author.id !== state.ownerId)) return;
       await check(state.threadId, { mode: 'evidence' });
     },
 
@@ -312,11 +289,8 @@ export function createGuidanceCoordinator({
       const state = active.get(newThread.id);
       if (!state) return;
       state.thread = newThread;
-      if (newThread.archived || newThread.locked) {
-        await removeState(state);
-        return;
-      }
-      await check(state.threadId, { mode: 'evidence' });
+      if (newThread.archived || newThread.locked) await removeState(state);
+      else await check(state.threadId, { mode: 'evidence' });
     },
 
     async onThreadDelete(thread) {
