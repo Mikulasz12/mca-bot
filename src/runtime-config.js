@@ -23,14 +23,17 @@ function normalise(input = {}) {
 
 export function createRuntimeConfigService({ path = DEFAULT_RUNTIME_CONFIG_PATH } = {}) {
   let current = DEFAULT_RUNTIME_CONFIG;
+  const listeners = new Set();
 
   async function save(value) {
+    const previous = current;
     const next = normalise(value);
     await mkdir(dirname(path), { recursive: true });
     const temporary = `${path}.tmp`;
     await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
     await rename(temporary, path);
     current = next;
+    for (const listener of listeners) listener(current, previous);
     return current;
   }
 
@@ -45,6 +48,11 @@ export function createRuntimeConfigService({ path = DEFAULT_RUNTIME_CONFIG_PATH 
       return current;
     },
     get: () => current,
+    subscribe(listener) {
+      if (typeof listener !== 'function') throw new TypeError('Config listener must be a function');
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     async update(patch) {
       return save({ ...current, ...patch });
     },
